@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>مشاكل الفريق</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- شاشة الباسورد (بتظهر بس لو فيه باسورد في config.js) -->
+  <div id="lock" class="lock hidden">
+    <form id="lock-form" class="card lock-card">
+      <h2>🔒 مشاكل الفريق</h2>
+      <p class="muted">اكتب باسورد الفريق عشان تدخل</p>
+      <input id="lock-input" type="password" placeholder="الباسورد" autocomplete="current-password" />
+      <p id="lock-error" class="error hidden">الباسورد غلط</p>
+      <button type="submit" class="btn primary">دخول</button>
+    </form>
+  </div>
+
+  <main id="app" class="container hidden">
+    <header class="top">
+      <h1>📋 مشاكل الفريق</h1>
+      <span id="mode-badge" class="badge"></span>
+    </header>
+
+    <!-- فورم إضافة مشكلة -->
+    <form id="issue-form" class="card">
+      <h2>إضافة مشكلة جديدة</h2>
+
+      <label for="problem">المشكلة <span class="req">*</span></label>
+      <textarea id="problem" rows="3" placeholder="اكتب المشكلة بإيجاز…" required></textarea>
+
+      <label for="note">ملاحظة <span class="muted">(اختياري)</span></label>
+      <textarea id="note" rows="2" placeholder="أي تفاصيل زيادة…"></textarea>
+
+      <div class="row">
+        <div class="field">
+          <label for="author">اسمك <span class="req">*</span></label>
+          <select id="author" required></select>
+        </div>
+        <div class="field">
+          <label for="category">التصنيف</label>
+          <select id="category"></select>
+        </div>
+      </div>
+
+      <p class="muted small">🕒 التاريخ والوقت بيتسجلوا تلقائي.</p>
+      <button type="submit" id="submit-btn" class="btn primary">إضافة المشكلة</button>
+    </form>
+
+    <!-- فلاتر -->
+    <section class="filters">
+      <div class="tabs" id="status-tabs">
+        <button class="tab active" data-status="open">مفتوحة <span id="count-open">0</span></button>
+        <button class="tab" data-status="solved">اتحلت <span id="count-solved">0</span></button>
+        <button class="tab" data-status="all">الكل <span id="count-all">0</span></button>
+      </div>
+      <div class="row">
+        <input id="search" type="search" placeholder="🔍 دوّر في المشاكل…" />
+        <select id="filter-category"></select>
+      </div>
+    </section>
+
+    <!-- لستة المشاكل -->
+    <section id="list" class="list"></section>
+    <p id="empty" class="empty hidden">مفيش مشاكل هنا 🎉</p>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
