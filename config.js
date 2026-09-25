@@ -13,4 +13,7 @@ window.APP_CONFIG = {
   // باسورد بسيط للفريق (اختياري). سيبه "" لو مش عايز باسورد.
   // ملحوظة: ده حماية خفيفة عشان لو اللينك اتسرب، مش حماية قوية.
   TEAM_PASSWORD: "",
+
+  // مفتاح إشعارات الموبايل العام (مش سري). نصه التاني السري متسجل في Supabase بس.
+  VAPID_PUBLIC_KEY: "BPMPrlx6TQejfbDsV8Y4TJ2TPprHTFv95Wp54Tk07PSyqVB7UpAImAD5t89mLoySu5YNKLP7bFOg16FzAyIQQv8",
 };
