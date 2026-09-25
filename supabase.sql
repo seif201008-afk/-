@@ -19,16 +19,19 @@ alter table public.team_problems enable row level security;
 drop policy if exists "team read"   on public.team_problems;
 drop policy if exists "team insert" on public.team_problems;
 drop policy if exists "team update" on public.team_problems;
+drop policy if exists "team delete" on public.team_problems;
 
--- أي حد معاه اللينك يقدر يشوف ويضيف مشكلة
+-- أي حد معاه اللينك يقدر يشوف ويضيف ويمسح مشكلة
 create policy "team read"   on public.team_problems for select using (true);
 create policy "team insert" on public.team_problems for insert with check (status = 'open');
 create policy "team update" on public.team_problems for update using (true) with check (true);
+create policy "team delete" on public.team_problems for delete using (true);
 
--- التعديل مسموح في خانات الحالة بس (اتحلت / إعادة فتح).
--- محدش يقدر يغيّر اسم المشكلة أو كاتبها بعد ما تتسجل، ومفيش مسح خالص.
-revoke update, delete on public.team_problems from anon, authenticated;
+-- التعديل مسموح في خانات الحالة بس (اتحلت / إعادة فتح). اسم المشكلة وكاتبها
+-- ما بيتغيروش بعد ما تتسجل، لكن مسموح تتمسح خالص.
+revoke update on public.team_problems from anon, authenticated;
 grant  update (status, solved_at, solved_by, solution) on public.team_problems to anon, authenticated;
+grant  delete on public.team_problems to anon, authenticated;
 
 -- تحديث لحظي: أي مشكلة جديدة تظهر عند الكل من غير ريفريش
 alter publication supabase_realtime add table public.team_problems;

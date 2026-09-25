@@ -139,6 +139,8 @@ h1, h2, h3 { text-wrap: balance; }
 .btn-secondary:hover:not(:disabled) { background: var(--hover); }
 .btn-ghost { background: transparent; color: var(--ink-2); }
 .btn-ghost:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.btn-ghost.danger { color: var(--danger); }
+.btn-ghost.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 
 .icon-btn {
   display: inline-grid;

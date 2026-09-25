@@ -113,6 +113,15 @@
       const { error } = await db.from(TABLE).update(patch).eq("id", id);
       if (error) throw error;
     },
+    async remove(id) {
+      if (mode === "demo") {
+        const all = (await store.list()).filter((r) => r.id !== id);
+        local.set(DEMO_KEY, JSON.stringify(all));
+        return;
+      }
+      const { error } = await db.from(TABLE).delete().eq("id", id);
+      if (error) throw error;
+    },
     subscribe(onChange) {
       if (!db) return;
       db.channel("team_problems_changes")
@@ -131,6 +140,7 @@
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     reopen: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
     link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+    trash: '<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/>',
   };
   const icon = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 
@@ -301,8 +311,9 @@
     if (route.view === "issue") {
       const i = findIssue(route.id);
       $("crumb").innerHTML = `<span>المشاكل</span><span class="sep">/</span><b>#${route.id}</b>`;
-      actions.innerHTML = i && mode === "live"
-        ? `<button type="button" class="btn btn-ghost btn-sm" data-action="copy">${icon("link")} انسخ اللينك</button>`
+      actions.innerHTML = i
+        ? `${mode === "live" ? `<button type="button" class="btn btn-ghost btn-sm" data-action="copy">${icon("link")} انسخ اللينك</button>` : ""}
+           <button type="button" class="btn btn-ghost btn-sm danger" data-action="delete">${icon("trash")} امسح</button>`
         : "";
     } else {
       $("crumb").innerHTML = "<b>مشكلة جديدة</b>";
@@ -569,6 +580,26 @@
     }
   }
 
+  async function deleteIssue(btn) {
+    const i = findIssue(route.id);
+    if (!i) return;
+    const ok = confirm(`تمسح المشكلة "${i.title}" نهائيًا؟ مفيش رجوع بعد كده.`);
+    if (!ok) return;
+
+    btn.disabled = true;
+    try {
+      await store.remove(route.id);
+      await refresh();
+      const next = issues.find((r) => r.status === "open") || issues[0];
+      go(next ? { view: "issue", id: next.id } : { view: "new" });
+      toast("اتمسحت المشكلة");
+    } catch (err) {
+      console.error(err);
+      toast("مقدرتش أمسح المشكلة: " + friendlyError(err));
+      btn.disabled = false;
+    }
+  }
+
   function copyLink() {
     const url = location.href.split("#")[0] + "#p" + route.id;
     const fail = () => toast("مقدرتش أنسخ اللينك. اللينك: " + url);
@@ -623,6 +654,7 @@
       const a = btn.dataset.action;
       if (a === "reopen") reopenIssue(btn);
       if (a === "copy") copyLink();
+      if (a === "delete") deleteIssue(btn);
       if (a === "new") go({ view: "new" });
     };
     view.addEventListener("click", onAction);
