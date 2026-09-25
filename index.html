@@ -106,6 +106,31 @@
   </form>
 </dialog>
 
+<!-- عارض الصور -->
+<div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="عرض الصور" dir="rtl" hidden>
+  <div class="lb-bar">
+    <span id="lb-count" class="lb-count"></span>
+    <div class="lb-actions">
+      <a id="lb-open" class="lb-btn" href="#" target="_blank" rel="noopener">افتح الأصل</a>
+      <button id="lb-delete" class="lb-btn danger" type="button">امسح الصورة</button>
+      <button id="lb-close" class="lb-btn lb-icon" type="button" aria-label="اقفل">
+        <svg class="i" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></svg>
+      </button>
+    </div>
+  </div>
+  <div id="lb-stage" class="lb-stage">
+    <button id="lb-prev" class="lb-nav lb-prev" type="button" aria-label="الصورة اللي قبلها">
+      <svg class="i" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
+    </button>
+    <img id="lb-img" alt="" />
+    <button id="lb-next" class="lb-nav lb-next" type="button" aria-label="الصورة اللي بعدها">
+      <svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
+    </button>
+  </div>
+</div>
+
+<input id="file-input" type="file" accept="image/*" multiple hidden />
+
 <div id="toast" class="toast" dir="rtl" role="status" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>

@@ -25,6 +25,9 @@
   const mode = !configured ? "demo" : window.supabase ? "live" : "broken";
   const db = mode === "live" ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
   const TABLE = cfg.TABLE || "team_problems";
+  const BUCKET = cfg.BUCKET || "problem-images";
+  const MAX_IMAGES = 10;
+  const MAX_BYTES = 5 * 1024 * 1024;
 
   const hoursAgo = (h) => new Date(Date.now() - h * 3600e3).toISOString();
   const demoSeed = () => [
@@ -33,45 +36,64 @@
       details: "من الساعة 2 الضهر البوت بيستلم الرسايل ومبيردش خالص. جربت من رقمين مختلفين ونفس الحكاية.",
       note: "العملاء بدأوا يتصلوا بالتليفون بدل الواتساب.",
       author: "عاصم", status: "open", created_at: hoursAgo(2),
-      solved_at: null, solved_by: null, solution: null,
+      solved_at: null, solved_by: null, solution: null, images: [],
     },
     {
       id: 4, title: "أسعار المنيو مش متحدثة في الداشبورد",
       details: "غيرنا أسعار 4 أصناف امبارح، بس لسه الأسعار القديمة هي اللي ظاهرة للعملاء.",
       note: null, author: "مريم", status: "open", created_at: hoursAgo(27),
-      solved_at: null, solved_by: null, solution: null,
+      solved_at: null, solved_by: null, solution: null, images: [],
     },
     {
       id: 3, title: "صفحة الدفع بتعلق على الآيفون",
       details: "لما العميل يدوس \"ادفع\" الصفحة بتفضل تحمّل ومش بتكمل. على أندرويد شغالة عادي.",
       note: null, author: "كريم", status: "solved", created_at: hoursAgo(80),
       solved_at: hoursAgo(70), solved_by: "يوسف",
-      solution: "كان فيه كاش قديم على السيرفر، اتمسح والدفع رجع يشتغل.",
+      solution: "كان فيه كاش قديم على السيرفر، اتمسح والدفع رجع يشتغل.", images: [],
     },
     {
       id: 2, title: "إشعارات الطلبات الجديدة بتوصل متأخر",
       details: "الإشعار بيوصل للمطعم بعد الطلب بحوالي 10 دقايق.",
       note: "حصلت في أكتر من فرع.", author: "مريم", status: "solved", created_at: hoursAgo(220),
       solved_at: hoursAgo(194), solved_by: "عاصم",
-      solution: "المهمة اللي بتبعت الإشعارات كانت شغالة كل 10 دقايق، اتظبطت تشتغل كل دقيقة.",
+      solution: "المهمة اللي بتبعت الإشعارات كانت شغالة كل 10 دقايق، اتظبطت تشتغل كل دقيقة.", images: [],
     },
     {
       id: 1, title: "صور الأصناف مش بتظهر في الموقع",
       details: "كل الصور بتظهر مربع فاضي في صفحة المنيو.",
       note: null, author: "يوسف", status: "solved", created_at: hoursAgo(960),
       solved_at: hoursAgo(957), solved_by: "كريم",
-      solution: "رابط التخزين اتغير، اتحدث في الإعدادات.",
+      solution: "رابط التخزين اتغير، اتحدث في الإعدادات.", images: [],
     },
   ];
 
+  const SETUP_IMAGES = "الصور لسه مش متفعّلة في Supabase. شغّل كود الصور مرة واحدة في SQL Editor.";
+
   const friendlyError = (e) => {
     const msg = String(e?.message || e || "");
-    if (e?.code === "42P01" || /does not exist|schema cache/i.test(msg))
+    if (e?.kind === "not-image") return "الملف ده مش صورة.";
+    if (e?.kind === "bad-image") return "مقدرتش أفتح الصورة دي. جرّب صورة JPG أو PNG.";
+    if (e?.kind === "too-big" || /maximum allowed size|too large|payload/i.test(msg)) return "الصورة كبيرة زيادة. أقصى حجم 5 ميجا.";
+    if (/mime type|not supported/i.test(msg)) return "نوع الصورة ده مش مدعوم. استخدم JPG أو PNG.";
+    if (/'images' column|column "images"|images.*does not exist|bucket not found/i.test(msg)) return SETUP_IMAGES;
+    if (e?.storage && /row-level security|unauthorized|permission|denied/i.test(msg)) return SETUP_IMAGES;
+    if (e?.code === "42P01" || /relation .* does not exist/i.test(msg))
       return "الجدول مش موجود في Supabase. شغّل ملف supabase.sql الأول.";
     if (/fetch|network|Failed/i.test(msg)) return "مفيش اتصال بالسيرفر. اتأكد من النت وجرّب تاني.";
     if (/Invalid API key|JWT/i.test(msg)) return "مفتاح Supabase في config.js غلط.";
     return msg || "حصلت مشكلة غير متوقعة.";
   };
+
+  const uid = () =>
+    (window.crypto?.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+
+  const blobToDataUrl = (blob) =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    });
 
   const store = {
     async list() {
@@ -95,7 +117,7 @@
         const id = all.reduce((m, r) => Math.max(m, r.id), 0) + 1;
         const full = {
           id, status: "open", created_at: new Date().toISOString(),
-          solved_at: null, solved_by: null, solution: null, ...row,
+          solved_at: null, solved_by: null, solution: null, images: [], ...row,
         };
         local.set(DEMO_KEY, JSON.stringify([full, ...all]));
         return full;
@@ -122,6 +144,27 @@
       const { error } = await db.from(TABLE).delete().eq("id", id);
       if (error) throw error;
     },
+    // بترجع مرجع الصورة: مسارها في Supabase Storage، أو data URL في وضع التجربة
+    async uploadImage({ blob, ext }) {
+      if (mode === "demo") return blobToDataUrl(blob);
+      const path = `${new Date().toISOString().slice(0, 7)}/${uid()}.${ext}`;
+      const { error } = await db.storage.from(BUCKET).upload(path, blob, {
+        contentType: blob.type || "image/jpeg",
+        cacheControl: "31536000",
+        upsert: false,
+      });
+      if (error) throw Object.assign(new Error(error.message || "upload failed"), { storage: true });
+      return path;
+    },
+    async removeImages(refs) {
+      const paths = (refs || []).filter((r) => r && !/^(data:|blob:|https?:)/.test(r));
+      if (!db || !paths.length) return;
+      try {
+        await db.storage.from(BUCKET).remove(paths);
+      } catch (e) {
+        console.warn(e);
+      }
+    },
     subscribe(onChange) {
       if (!db) return;
       db.channel("team_problems_changes")
@@ -129,6 +172,56 @@
         .subscribe();
     },
   };
+
+  // ============ الصور ============
+  const imagesOf = (i) => (Array.isArray(i?.images) ? i.images.filter(Boolean) : []);
+
+  function imageUrl(ref) {
+    if (!ref) return "";
+    if (/^(data:|blob:|https?:)/.test(ref)) return ref;
+    return db ? db.storage.from(BUCKET).getPublicUrl(ref).data.publicUrl : "";
+  }
+
+  const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
+  const fail = (kind) => Object.assign(new Error(kind), { kind });
+
+  function loadImage(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(fail("bad-image")); };
+      img.src = url;
+    });
+  }
+
+  // بتصغّر الصورة قبل الرفع عشان تترفع بسرعة وما تاخدش مساحة
+  async function prepareImage(file) {
+    if (!file || !/^image\//.test(file.type)) throw fail("not-image");
+    const maxSide = mode === "demo" ? 1280 : 1920;
+    const keepLimit = mode === "demo" ? 300 * 1024 : 1.5 * 1024 * 1024;
+    if (file.type === "image/gif") {
+      if (file.size > (mode === "demo" ? keepLimit : MAX_BYTES)) throw fail("too-big");
+      return { blob: file, ext: "gif" };
+    }
+    const img = await loadImage(file);
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    const scale = Math.min(1, maxSide / Math.max(w, h));
+    if (scale === 1 && file.size <= keepLimit && EXT[file.type]) return { blob: file, ext: EXT[file.type] };
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", mode === "demo" ? 0.8 : 0.86));
+    if (!blob) throw fail("bad-image");
+    if (blob.size > MAX_BYTES) throw fail("too-big");
+    return { blob, ext: "jpg" };
+  }
 
   // ============ أدوات ============
   const esc = (s) =>
@@ -141,6 +234,8 @@
     reopen: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
     link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
     trash: '<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/>',
+    image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
+    x: '<path d="M18 6 6 18M6 6l12 12"/>',
   };
   const icon = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 
@@ -156,6 +251,7 @@
     minute: ["دقيقة", "دقيقتين", "دقايق", "دقيقة"],
     hour: ["ساعة", "ساعتين", "ساعات", "ساعة"],
     day: ["يوم", "يومين", "أيام", "يوم"],
+    image: ["صورة", "صورتين", "صور", "صورة"],
   };
   function duration(ms) {
     const m = Math.max(1, Math.round(ms / 60e3));
@@ -207,7 +303,7 @@
     el.textContent = msg;
     el.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (el.hidden = true), 3200);
+    toastTimer = setTimeout(() => (el.hidden = true), 3600);
   }
 
   function notice(text, { error = false, action = null, onAction = null } = {}) {
@@ -228,13 +324,16 @@
     return m ? { view: "issue", id: Number(m[1]) } : { view: "new" };
   };
   let route = parseHash(location.hash);
-  const draft = { title: "", details: "", note: "", author: "" };
+  // images: صور المشكلة الجديدة قبل ما تترفع [{ key, blob, ext, url }]
+  const draft = { title: "", details: "", note: "", author: "", images: [] };
   let viewPending = false;
+  let uploadingIssue = null;
+  let submitting = false;
 
   const findIssue = (id) => issues.find((i) => i.id === id);
   const typingIn = (el) => {
     const a = document.activeElement;
-    return Boolean(a && el.contains(a) && (a.tagName === "INPUT" || a.tagName === "TEXTAREA"));
+    return Boolean(a && el.contains(a) && ((a.tagName === "INPUT" && a.type !== "file") || a.tagName === "TEXTAREA"));
   };
 
   // ============ القايمة الجانبية ============
@@ -285,11 +384,13 @@
       }
       const active = route.view === "issue" && route.id === i.id;
       const solved = i.status === "solved";
+      const hasImages = imagesOf(i).length > 0;
       html += `
         <button type="button" class="sb-item${active ? " active" : ""}${solved ? " solved" : ""}" data-id="${i.id}"
           ${active ? 'aria-current="page"' : ""} title="${esc(`${i.title} — ${i.author}، ${ago(i.created_at)}`)}">
           <span class="dot${solved ? " solved" : ""}" aria-hidden="true"></span>
           <span class="sb-item-title">${esc(i.title)}</span>
+          ${hasImages ? `<span class="sb-item-img" title="فيها صور">${icon("image")}</span>` : ""}
         </button>`;
     }
     el.innerHTML = html;
@@ -347,6 +448,16 @@
             <textarea id="note" class="input" rows="2" placeholder="أي حاجة زيادة حابب الفريق يعرفها">${esc(draft.note)}</textarea>
           </div>
 
+          <div class="field">
+            <span class="label" id="images-label">صور <span class="optional">اختياري، لحد ${MAX_IMAGES} صور</span></span>
+            <button type="button" id="dropzone" class="dropzone" data-action="pick-images" aria-labelledby="images-label" aria-describedby="images-hint">
+              ${icon("image")}
+              <span><b>اختار صور</b> أو اسحبها هنا</span>
+              <span class="dz-hint" id="images-hint">وتقدر تلصق سكرين شوت على طول بـ Ctrl+V</span>
+            </button>
+            <div id="thumbs" class="thumbs" hidden></div>
+          </div>
+
           <div class="grid-2">
             <div class="field">
               <label for="author">اسمك <span class="req" aria-hidden="true">*</span></label>
@@ -367,6 +478,42 @@
             <button id="submit-btn" type="submit" class="btn btn-primary btn-lg">${icon("plus")} سجّل المشكلة</button>
           </div>
         </form>
+      </section>`;
+  }
+
+  function renderDraftThumbs() {
+    const el = $("thumbs");
+    if (!el) return;
+    el.hidden = !draft.images.length;
+    el.innerHTML = draft.images
+      .map((d, n) => `
+        <div class="thumb">
+          <img src="${d.url}" alt="صورة ${n + 1}" />
+          <button type="button" class="thumb-x" data-action="unpick" data-key="${d.key}" aria-label="شيل الصورة ${n + 1}">${icon("x")}</button>
+        </div>`)
+      .join("");
+  }
+
+  function galleryHtml(i) {
+    const imgs = imagesOf(i);
+    const busy = uploadingIssue === i.id;
+    const full = imgs.length >= MAX_IMAGES;
+    const addBtn = `<button type="button" class="btn btn-ghost btn-sm" data-action="add-images" ${busy || full ? "disabled" : ""}>
+        ${icon("image")} ${busy ? "بيرفع…" : "أضف صور"}</button>`;
+    return `
+      <section class="section gallery-zone">
+        <div class="section-head">
+          <h2>الصور${imgs.length ? ` · ${imgs.length}` : ""}</h2>
+          ${addBtn}
+        </div>
+        ${imgs.length
+          ? `<div class="gallery">${imgs
+              .map((r, n) => `
+                <button type="button" class="thumb" data-action="view-image" data-index="${n}" aria-label="افتح الصورة ${n + 1}">
+                  <img src="${esc(imageUrl(r))}" alt="" loading="lazy" />
+                </button>`)
+              .join("")}</div>`
+          : `<p class="none">مفيش صور. دوس "أضف صور"، أو اسحب صورة هنا، أو الصق سكرين شوت بـ Ctrl+V.</p>`}
       </section>`;
   }
 
@@ -430,6 +577,7 @@
           <div class="detail-main">
             ${section("وصف المشكلة", i.details)}
             ${i.note ? section("ملاحظة", i.note) : ""}
+            ${galleryHtml(i)}
             ${solved && i.solution ? section("إزاي اتحلت", i.solution, "solution") : ""}
             ${action}
           </div>
@@ -454,6 +602,7 @@
     renderTop();
     if (route.view === "new") {
       view.innerHTML = composeHtml();
+      renderDraftThumbs();
     } else if (!loaded) {
       view.innerHTML = `<div class="view-loading">${'<div class="sk"></div>'.repeat(4)}</div>`;
     } else {
@@ -510,7 +659,36 @@
     $(errorId).hidden = !show;
   }
 
+  function clearDraftImages() {
+    draft.images.forEach((d) => URL.revokeObjectURL(d.url));
+    draft.images = [];
+  }
+
+  async function addDraftImages(files) {
+    const list = [...files];
+    const room = MAX_IMAGES - draft.images.length;
+    if (room <= 0) return toast(`أقصى عدد ${MAX_IMAGES} صور للمشكلة.`);
+    if (list.length > room) toast(`هتتضاف أول ${plural(room, WORDS.image)} بس. أقصى عدد ${MAX_IMAGES} صور للمشكلة.`);
+    for (const file of list.slice(0, room)) {
+      try {
+        const prepared = await prepareImage(file);
+        draft.images.push({ key: uid(), ...prepared, url: URL.createObjectURL(prepared.blob) });
+      } catch (err) {
+        toast(friendlyError(err));
+      }
+    }
+    renderDraftThumbs();
+  }
+
+  function removeDraftImage(key) {
+    const d = draft.images.find((x) => x.key === key);
+    if (d) URL.revokeObjectURL(d.url);
+    draft.images = draft.images.filter((x) => x.key !== key);
+    renderDraftThumbs();
+  }
+
   async function createIssue() {
+    if (submitting) return;
     const title = $("title").value.trim();
     const author = $("author").value.trim();
     flagError("title", "title-error", !title);
@@ -519,25 +697,81 @@
     if (!author) return $("author").focus();
 
     const btn = $("submit-btn");
+    const label = btn.innerHTML;
+    const setLabel = (text) => { if (btn.isConnected) btn.textContent = text; };
+    submitting = true;
     btn.disabled = true;
+    const uploaded = [];
     try {
-      const row = await store.add({
+      const pics = [...draft.images];
+      for (const [n, pic] of pics.entries()) {
+        setLabel(`بيرفع الصور (${n + 1} من ${pics.length})…`);
+        uploaded.push(await store.uploadImage(pic));
+      }
+      setLabel("بيسجّل…");
+      const row = {
         title,
         author,
         details: $("details").value.trim() || null,
         note: $("note").value.trim() || null,
-      });
+      };
+      if (uploaded.length) row.images = uploaded;
+      const created = await store.add(row);
       saveName(author);
+      clearDraftImages();
       Object.assign(draft, { title: "", details: "", note: "", author: "" });
       if (tab === "solved") { tab = "open"; local.set(TAB_KEY, tab); }
       await refresh();
-      go({ view: "issue", id: row.id });
-      toast(`اتسجلت المشكلة #${row.id}`);
+      go({ view: "issue", id: created.id });
+      toast(`اتسجلت المشكلة #${created.id}`);
     } catch (err) {
       console.error(err);
+      store.removeImages(uploaded);
       toast("مقدرتش أسجّل المشكلة: " + friendlyError(err));
-      btn.disabled = false;
+      if (btn.isConnected) { btn.disabled = false; btn.innerHTML = label; }
+    } finally {
+      submitting = false;
     }
+  }
+
+  async function addImagesToIssue(files) {
+    const id = route.id;
+    const i = findIssue(id);
+    if (!i || uploadingIssue) return;
+    const list = [...files].filter((f) => /^image\//.test(f.type));
+    if (!list.length) return toast("الملف ده مش صورة.");
+    const room = MAX_IMAGES - imagesOf(i).length;
+    if (room <= 0) return toast(`أقصى عدد ${MAX_IMAGES} صور للمشكلة.`);
+    if (list.length > room) toast(`هتتضاف أول ${plural(room, WORDS.image)} بس. أقصى عدد ${MAX_IMAGES} صور للمشكلة.`);
+
+    uploadingIssue = id;
+    const btn = document.querySelector('[data-action="add-images"]');
+    if (btn) { btn.disabled = true; btn.innerHTML = `${icon("image")} بيرفع…`; }
+    const uploaded = [];
+    try {
+      for (const file of list.slice(0, room)) {
+        uploaded.push(await store.uploadImage(await prepareImage(file)));
+      }
+      await refresh();
+      const latest = imagesOf(findIssue(id));
+      await store.update(id, { images: [...latest, ...uploaded].slice(0, MAX_IMAGES) });
+      await refresh();
+      toast(`اتضافت ${plural(uploaded.length, WORDS.image)}`);
+    } catch (err) {
+      console.error(err);
+      store.removeImages(uploaded);
+      toast("مقدرتش أضيف الصور: " + friendlyError(err));
+    } finally {
+      uploadingIssue = null;
+      if (route.view === "issue" && route.id === id) renderView();
+    }
+  }
+
+  function handleFiles(files) {
+    const images = [...(files || [])].filter((f) => /^image\//.test(f.type));
+    if (!images.length) return toast("الملف ده مش صورة.");
+    if (route.view === "new") addDraftImages(images);
+    else if (findIssue(route.id)) addImagesToIssue(images);
   }
 
   async function resolveIssue(form) {
@@ -588,7 +822,9 @@
 
     btn.disabled = true;
     try {
-      await store.remove(route.id);
+      const refs = imagesOf(i);
+      await store.remove(i.id);
+      store.removeImages(refs);
       await refresh();
       const next = issues.find((r) => r.status === "open") || issues[0];
       go(next ? { view: "issue", id: next.id } : { view: "new" });
@@ -602,11 +838,71 @@
 
   function copyLink() {
     const url = location.href.split("#")[0] + "#p" + route.id;
-    const fail = () => toast("مقدرتش أنسخ اللينك. اللينك: " + url);
+    const onFail = () => toast("مقدرتش أنسخ اللينك. اللينك: " + url);
     try {
-      navigator.clipboard.writeText(url).then(() => toast("اتنسخ لينك المشكلة"), fail);
+      navigator.clipboard.writeText(url).then(() => toast("اتنسخ لينك المشكلة"), onFail);
     } catch {
-      fail();
+      onFail();
+    }
+  }
+
+  // ============ عارض الصور ============
+  const lb = { refs: [], index: 0, issueId: null };
+
+  function openLightbox(issueId, index) {
+    const i = findIssue(issueId);
+    if (!i) return;
+    lb.refs = imagesOf(i);
+    lb.index = index;
+    lb.issueId = issueId;
+    $("lightbox").hidden = false;
+    document.body.classList.add("no-scroll");
+    showLightbox();
+    $("lb-close").focus();
+  }
+
+  function showLightbox() {
+    const n = lb.refs.length;
+    if (!n) return closeLightbox();
+    lb.index = ((lb.index % n) + n) % n;
+    const src = imageUrl(lb.refs[lb.index]);
+    $("lb-img").src = src;
+    $("lb-img").alt = `صورة ${lb.index + 1} من ${n}`;
+    $("lb-count").textContent = `صورة ${lb.index + 1} من ${n}`;
+    $("lb-open").hidden = src.startsWith("data:");
+    $("lb-open").href = src;
+    $("lb-prev").hidden = n < 2;
+    $("lb-next").hidden = n < 2;
+  }
+
+  function closeLightbox() {
+    if ($("lightbox").hidden) return;
+    $("lightbox").hidden = true;
+    $("lb-img").removeAttribute("src");
+    document.body.classList.remove("no-scroll");
+  }
+
+  async function deleteImage() {
+    const ref = lb.refs[lb.index];
+    if (!ref || !confirm("تمسح الصورة دي؟")) return;
+    const btn = $("lb-delete");
+    btn.disabled = true;
+    try {
+      await refresh();
+      const next = imagesOf(findIssue(lb.issueId)).filter((r) => r !== ref);
+      await store.update(lb.issueId, { images: next });
+      store.removeImages([ref]);
+      await refresh();
+      lb.refs = next;
+      if (lb.index >= next.length) lb.index = next.length - 1;
+      showLightbox();
+      if (route.view === "issue") renderView();
+      toast("اتمسحت الصورة");
+    } catch (err) {
+      console.error(err);
+      toast("مقدرتش أمسح الصورة: " + friendlyError(err));
+    } finally {
+      btn.disabled = false;
     }
   }
 
@@ -636,7 +932,7 @@
     const view = $("view");
     view.addEventListener("input", (e) => {
       const id = e.target.id;
-      if (id in draft) draft[id] = e.target.value;
+      if (id in draft && id !== "images") draft[id] = e.target.value;
       if (id === "title" && e.target.value.trim()) flagError("title", "title-error", false);
       if (id === "author" && e.target.value.trim()) flagError("author", "author-error", false);
       if (id === "by" && e.target.value.trim()) flagError("by", "by-error", false);
@@ -656,9 +952,52 @@
       if (a === "copy") copyLink();
       if (a === "delete") deleteIssue(btn);
       if (a === "new") go({ view: "new" });
+      if (a === "pick-images" || a === "add-images") $("file-input").click();
+      if (a === "unpick") removeDraftImage(btn.dataset.key);
+      if (a === "view-image") openLightbox(route.id, Number(btn.dataset.index));
     };
     view.addEventListener("click", onAction);
     $("top-actions").addEventListener("click", onAction);
+
+    $("file-input").addEventListener("change", (e) => {
+      const files = [...e.target.files];
+      e.target.value = "";
+      if (files.length) handleFiles(files);
+    });
+
+    // سحب وإفلات الصور على المحتوى
+    const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+    let dragDepth = 0;
+    view.addEventListener("dragenter", (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth++;
+      view.classList.add("dragging");
+    });
+    view.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+    view.addEventListener("dragleave", () => {
+      if (--dragDepth <= 0) { dragDepth = 0; view.classList.remove("dragging"); }
+    });
+    view.addEventListener("drop", (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth = 0;
+      view.classList.remove("dragging");
+      handleFiles(e.dataTransfer.files);
+    });
+    // عشان المتصفح ما يفتحش الصورة لو اتسابت برّه المكان المخصص
+    window.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+    window.addEventListener("drop", (e) => { if (hasFiles(e)) e.preventDefault(); });
+
+    // لصق سكرين شوت
+    document.addEventListener("paste", (e) => {
+      if (!$("lightbox").hidden) return;
+      const files = [...(e.clipboardData?.files || [])].filter((f) => /^image\//.test(f.type));
+      if (!files.length) return;
+      if (route.view === "issue" && !findIssue(route.id)) return;
+      e.preventDefault();
+      handleFiles(files);
+    });
 
     // لو وصل تحديث وحد بيكتب، نستنى لحد ما يخلص
     view.addEventListener("focusout", () => setTimeout(() => viewPending && renderView(), 0));
@@ -666,6 +1005,15 @@
     $("menu-btn").addEventListener("click", openSidebar);
     $("sb-close").addEventListener("click", closeSidebar);
     $("scrim").addEventListener("click", closeSidebar);
+
+    // عارض الصور
+    $("lb-close").addEventListener("click", closeLightbox);
+    $("lb-prev").addEventListener("click", () => { lb.index--; showLightbox(); });
+    $("lb-next").addEventListener("click", () => { lb.index++; showLightbox(); });
+    $("lb-delete").addEventListener("click", deleteImage);
+    $("lightbox").addEventListener("click", (e) => {
+      if (e.target === $("lightbox") || e.target === $("lb-stage")) closeLightbox();
+    });
 
     const dialog = $("name-dialog");
     $("me-btn").addEventListener("click", () => {
@@ -686,6 +1034,13 @@
     });
 
     document.addEventListener("keydown", (e) => {
+      if (!$("lightbox").hidden) {
+        if (e.key === "Escape") closeLightbox();
+        // الاتجاه من اليمين للشمال: الشمال = اللي بعدها
+        if (e.key === "ArrowLeft") { lb.index++; showLightbox(); }
+        if (e.key === "ArrowRight") { lb.index--; showLightbox(); }
+        return;
+      }
       if (e.key === "Escape") closeSidebar();
       const a = document.activeElement;
       const typing = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA");
@@ -698,13 +1053,16 @@
 
     window.addEventListener("hashchange", () => {
       const r = parseHash(location.hash);
-      if (r.view !== route.view || r.id !== route.id) go(r);
+      if (r.view !== route.view || r.id !== route.id) {
+        closeLightbox();
+        go(r);
+      }
     });
 
     // الساعة في فورم "مشكلة جديدة" وتوقيت "من قد إيه"
     setInterval(() => {
       if ($("now")) $("now").textContent = dateTime(new Date().toISOString());
-      if (route.view === "issue") renderView();
+      if (route.view === "issue" && $("lightbox").hidden) renderView();
     }, 30e3);
   }
 

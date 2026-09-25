@@ -529,6 +529,145 @@ textarea.input { resize: vertical; min-height: 72px; }
 .view-loading .sk { height: 18px; margin: 16px 0; }
 .view-loading .sk:first-child { width: 40%; height: 28px; }
 
+/* ================= الصور ================= */
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  padding: 18px 16px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 10px;
+  background: var(--sidebar);
+  color: var(--ink-2);
+  font-size: 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.dropzone:hover,
+.view.dragging .dropzone {
+  border-color: var(--focus);
+  background: color-mix(in srgb, var(--focus) 7%, var(--sidebar));
+}
+.dropzone > .i { width: 22px; height: 22px; margin-bottom: 4px; color: var(--muted); }
+.dropzone b { font-weight: 600; color: var(--ink); }
+.dz-hint { font-size: 12.5px; color: var(--muted); }
+
+.thumbs,
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+}
+.gallery { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+.thumb {
+  position: relative;
+  aspect-ratio: 1;
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--sidebar);
+}
+.thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+button.thumb { cursor: zoom-in; transition: border-color 0.15s; }
+button.thumb:hover { border-color: var(--line-strong); }
+button.thumb:hover img { opacity: 0.9; }
+.thumb-x {
+  position: absolute;
+  top: 5px;
+  inset-inline-end: 5px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  cursor: pointer;
+}
+.thumb-x:hover { background: rgba(0, 0, 0, 0.8); }
+.thumb-x .i { width: 14px; height: 14px; }
+
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.section-head h2 { margin: 0; }
+.view.dragging .gallery-zone { outline: 2px dashed var(--focus); outline-offset: 8px; border-radius: 6px; }
+
+.sb-item-img { display: inline-grid; color: var(--muted); }
+.sb-item-img .i { width: 14px; height: 14px; }
+
+body.no-scroll { overflow: hidden; }
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: rgba(8, 9, 11, 0.97);
+  color: #fff;
+}
+.lb-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; }
+.lb-count { font-size: 14px; font-weight: 600; opacity: 0.85; }
+.lb-actions { display: flex; align-items: center; gap: 6px; }
+.lb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  background: transparent;
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+.lb-btn:hover { background: rgba(255, 255, 255, 0.1); }
+.lb-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.lb-btn.danger { border-color: rgba(255, 154, 149, 0.4); color: #ff9a95; }
+.lb-icon { padding: 6px; }
+.lb-stage {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 56px;
+  align-items: center;
+  min-height: 0;
+  padding-bottom: 16px;
+}
+.lb-stage img {
+  grid-column: 2;
+  justify-self: center;
+  max-width: 100%;
+  max-height: calc(100vh - 96px);
+  max-height: calc(100dvh - 96px);
+  border-radius: 6px;
+  object-fit: contain;
+}
+.lb-prev { grid-column: 1; }
+.lb-next { grid-column: 3; }
+.lb-nav {
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  width: 42px;
+  height: 42px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+}
+.lb-nav:hover { background: rgba(255, 255, 255, 0.22); }
+
 /* ================= الحوار والتوست ================= */
 .dialog {
   width: min(92vw, 400px);
@@ -614,6 +753,9 @@ textarea.input { resize: vertical; min-height: 72px; }
   .row-end { flex-direction: column; align-items: stretch; }
   .view-head h1, .detail-title { font-size: 22px; }
   .form-actions .btn { width: 100%; }
+  .lb-stage { grid-template-columns: 44px minmax(0, 1fr) 44px; }
+  .lb-nav { width: 36px; height: 36px; }
+  .lb-bar { padding-inline: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
