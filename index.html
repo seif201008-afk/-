@@ -1,79 +1,105 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>مشاكل الفريق</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>سجل مشاكل الفريق</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Readex+Pro:wght@500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- شاشة الباسورد (بتظهر بس لو فيه باسورد في config.js) -->
-  <div id="lock" class="lock hidden">
-    <form id="lock-form" class="card lock-card">
-      <h2>🔒 مشاكل الفريق</h2>
-      <p class="muted">اكتب باسورد الفريق عشان تدخل</p>
+<div class="page" dir="rtl" lang="ar">
+
+  <!-- شاشة الباسورد: بتظهر بس لو فيه باسورد في config.js -->
+  <div id="lock" class="lock" hidden>
+    <form id="lock-form" class="panel lock-card" novalidate>
+      <h1 class="lock-title">سجل مشاكل الفريق</h1>
+      <p class="muted">اكتب باسورد الفريق عشان تدخل.</p>
       <input id="lock-input" type="password" placeholder="الباسورد" autocomplete="current-password" />
-      <p id="lock-error" class="error hidden">الباسورد غلط</p>
-      <button type="submit" class="btn primary">دخول</button>
+      <p id="lock-error" class="field-error" hidden>الباسورد غلط، جرّب تاني.</p>
+      <button type="submit" class="btn btn-primary">دخول</button>
     </form>
   </div>
 
-  <main id="app" class="container hidden">
-    <header class="top">
-      <h1>📋 مشاكل الفريق</h1>
-      <span id="mode-badge" class="badge"></span>
+  <main id="app" hidden>
+    <header class="masthead">
+      <div>
+        <h1>سجل مشاكل الفريق</h1>
+        <p id="summary" class="summary">بيحمّل…</p>
+      </div>
+      <span id="mode-badge" class="mode"></span>
     </header>
 
-    <!-- فورم إضافة مشكلة -->
-    <form id="issue-form" class="card">
-      <h2>إضافة مشكلة جديدة</h2>
+    <div id="banner" class="banner" hidden>
+      <p id="banner-text"></p>
+      <button id="banner-action" type="button" class="btn btn-ghost btn-sm" hidden></button>
+    </div>
 
-      <label for="problem">المشكلة <span class="req">*</span></label>
-      <textarea id="problem" rows="3" placeholder="اكتب المشكلة بإيجاز…" required></textarea>
-
-      <label for="note">ملاحظة <span class="muted">(اختياري)</span></label>
-      <textarea id="note" rows="2" placeholder="أي تفاصيل زيادة…"></textarea>
-
-      <div class="row">
+    <!-- تسجيل مشكلة جديدة -->
+    <section class="panel compose" aria-labelledby="compose-title">
+      <h2 id="compose-title">سجّل مشكلة جديدة</h2>
+      <form id="issue-form" novalidate>
         <div class="field">
-          <label for="author">اسمك <span class="req">*</span></label>
-          <select id="author" required></select>
+          <label for="title">اسم المشكلة <span class="req" aria-hidden="true">*</span></label>
+          <input id="title" type="text" maxlength="120" placeholder="مثلًا: البوت مش بيرد على طلبات الواتساب" autocomplete="off" />
+          <p class="field-error" id="title-error" hidden>اكتب اسم للمشكلة عشان تظهر بيه في القايمة.</p>
         </div>
+
         <div class="field">
-          <label for="category">التصنيف</label>
-          <select id="category"></select>
+          <label for="details">وصف المشكلة <span class="optional">اختياري</span></label>
+          <textarea id="details" rows="3" placeholder="حصلت إمتى؟ فين بالظبط؟ جربت إيه؟"></textarea>
         </div>
-      </div>
 
-      <p class="muted small">🕒 التاريخ والوقت بيتسجلوا تلقائي.</p>
-      <button type="submit" id="submit-btn" class="btn primary">إضافة المشكلة</button>
-    </form>
+        <div class="field">
+          <label for="note">ملاحظة <span class="optional">اختياري</span></label>
+          <textarea id="note" rows="2" placeholder="أي حاجة زيادة حابب تقولها"></textarea>
+        </div>
 
-    <!-- فلاتر -->
-    <section class="filters">
-      <div class="tabs" id="status-tabs">
-        <button class="tab active" data-status="open">مفتوحة <span id="count-open">0</span></button>
-        <button class="tab" data-status="solved">اتحلت <span id="count-solved">0</span></button>
-        <button class="tab" data-status="all">الكل <span id="count-all">0</span></button>
-      </div>
-      <div class="row">
-        <input id="search" type="search" placeholder="🔍 دوّر في المشاكل…" />
-        <select id="filter-category"></select>
-      </div>
+        <div class="field">
+          <label for="author">اسمك <span class="req" aria-hidden="true">*</span></label>
+          <div class="inline">
+            <input id="author" type="text" maxlength="60" list="names" placeholder="اكتب اسمك" autocomplete="name" />
+            <button id="submit-btn" type="submit" class="btn btn-primary">سجّل المشكلة</button>
+          </div>
+          <p class="field-error" id="author-error" hidden>اكتب اسمك عشان الفريق يعرف مين سجّل المشكلة.</p>
+        </div>
+        <p class="hint">التاريخ والوقت بيتسجلوا تلقائي.</p>
+      </form>
+      <datalist id="names"></datalist>
     </section>
 
-    <!-- لستة المشاكل -->
-    <section id="list" class="list"></section>
-    <p id="empty" class="empty hidden">مفيش مشاكل هنا 🎉</p>
+    <!-- الأقسام -->
+    <section class="board" aria-label="المشاكل">
+      <div class="tabs" role="tablist" id="tabs">
+        <button type="button" role="tab" class="tab" id="tab-open" data-status="open" aria-selected="true">
+          متحلتش <span class="count" id="count-open">0</span>
+        </button>
+        <button type="button" role="tab" class="tab" id="tab-solved" data-status="solved" aria-selected="false">
+          اتحلت <span class="count" id="count-solved">0</span>
+        </button>
+        <button type="button" role="tab" class="tab" id="tab-all" data-status="all" aria-selected="false">
+          كل المشاكل <span class="count" id="count-all">0</span>
+        </button>
+      </div>
+
+      <div class="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+        <input id="search" type="search" placeholder="دوّر باسم المشكلة أو اسم اللي كتبها…" aria-label="بحث" />
+      </div>
+
+      <div id="list" class="list" role="tabpanel" aria-live="polite">
+        <p class="list-empty">بيحمّل المشاكل…</p>
+      </div>
+    </section>
   </main>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+</div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js"></script>
-  <script src="app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
