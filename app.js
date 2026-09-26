@@ -1952,6 +1952,10 @@
               <span class="switch-text"><b>صوت للرسايل الجديدة</b><span class="sub">صوت بسيط مع كل رسالة توصلك وإنت فاتح الموقع، على الجهاز ده</span></span>
             </label>
           </div>
+          <div class="field sub-fields" ${soundOn ? "" : "hidden"} id="sound-vol-field">
+            <label for="sound-vol">مستوى الصوت</label>
+            <input id="sound-vol" class="range" type="range" min="0" max="100" step="5" value="${soundVol}" />
+          </div>
 
           <div class="set-row">
             <label class="switch" for="quiet-on">
@@ -2609,7 +2613,11 @@
 
   // ---------- صوت الرسايل الجديدة ----------
   const SOUND_KEY = "team_problems_sound";
+  const SOUND_VOL_KEY = "team_problems_sound_vol";
   let soundOn = local.get(SOUND_KEY) !== "off";
+  // من 0 لحد 100 على السلايدر؛ 70% دلوقتي بدل الصوت الثابت الأول اللي كان أهدى بكتير
+  let soundVol = Math.min(100, Math.max(0, Number(local.get(SOUND_VOL_KEY) ?? 70) || 0));
+  const soundGain = () => (soundVol / 100) * 0.6;
   let audioCtx = null;
   // المتصفح مبيسمحش بالصوت غير بعد أول دوسة في الصفحة
   function unlockAudio() {
@@ -2619,9 +2627,8 @@
     } catch {}
   }
   let lastDing = 0;
-  function ding() {
-    if (!soundOn || !audioCtx || Date.now() - lastDing < 1200) return;
-    lastDing = Date.now();
+  function playDing(peak) {
+    if (!audioCtx || peak < 0.003) return;
     try {
       const t = audioCtx.currentTime;
       [[880, 0], [1320, 0.12]].forEach(([f, d]) => {
@@ -2630,13 +2637,25 @@
         o.type = "sine";
         o.frequency.value = f;
         g.gain.setValueAtTime(0.0001, t + d);
-        g.gain.exponentialRampToValueAtTime(0.18, t + d + 0.02);
+        g.gain.exponentialRampToValueAtTime(peak, t + d + 0.02);
         g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.25);
         o.connect(g).connect(audioCtx.destination);
         o.start(t + d);
         o.stop(t + d + 0.3);
       });
     } catch {}
+  }
+  function ding() {
+    if (!soundOn || Date.now() - lastDing < 1200) return;
+    lastDing = Date.now();
+    playDing(soundGain());
+  }
+  // معاينة وإنت بتحرّك السلايدر، من غير ما تستنى رسالة جديدة
+  let lastPreview = 0;
+  function previewDing() {
+    if (Date.now() - lastPreview < 250) return;
+    lastPreview = Date.now();
+    playDing(soundGain());
   }
   // بنرن مرة لما توصل رسالة جديدة من حد تاني في أي محادثة أنا فيها
   const seenMsgs = { p: null, c: null };
@@ -3760,6 +3779,12 @@
         chatQuery = t.value;
         renderConvList();
       }
+      if (id === "sound-vol") {
+        soundVol = Number(t.value) || 0;
+        local.set(SOUND_VOL_KEY, String(soundVol));
+        unlockAudio();
+        previewDing();
+      }
     });
 
     view.addEventListener("toggle", (e) => {
@@ -3780,6 +3805,7 @@
       if (t.id === "sound-on") {
         soundOn = t.checked;
         local.set(SOUND_KEY, soundOn ? "on" : "off");
+        $("sound-vol-field").hidden = !soundOn;
         if (soundOn) { unlockAudio(); lastDing = 0; ding(); }
       }
       if (t.id === "mute-on") saveSetting({ muted: t.checked }, t.checked ? "قفلت كل الإشعارات دلوقتي" : "رجّعت الإشعارات تاني");
