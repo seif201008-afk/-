@@ -306,7 +306,7 @@
     return data;
   }
 
-  const ME_COLS = "user_id,display_name,joined_at,last_seen,removed,availability,status_note,quiet_start,quiet_end,summary_hour,tz";
+  const ME_COLS = "user_id,display_name,joined_at,last_seen,removed,availability,status_note,quiet_start,quiet_end,summary_hour,tz,muted";
   const store = {
     join: () => {
       const meta = sessionUser()?.user_metadata || {};
@@ -1853,6 +1853,14 @@
             <button type="button" class="btn btn-primary" id="push-action" data-action="push-toggle" hidden></button>
           </div>
           <ol id="push-steps" class="push-steps" hidden></ol>
+
+          <div class="set-row">
+            <label class="switch" for="mute-on">
+              <input id="mute-on" type="checkbox" ${me.muted ? "checked" : ""} />
+              <span class="switch-track" aria-hidden="true"></span>
+              <span class="switch-text"><b>قفل كل الإشعارات دلوقتي</b><span class="sub">مفيش أي إشعار يوصلك على أي جهاز لحد ما ترجّعها. مختلف عن ساعات الهدوء اللي بتتحدد بالوقت.</span></span>
+            </label>
+          </div>
 
           <div class="set-row">
             <label class="switch" for="sound-on">
@@ -3657,6 +3665,7 @@
         local.set(SOUND_KEY, soundOn ? "on" : "off");
         if (soundOn) { unlockAudio(); lastDing = 0; ding(); }
       }
+      if (t.id === "mute-on") saveSetting({ muted: t.checked }, t.checked ? "قفلت كل الإشعارات دلوقتي" : "رجّعت الإشعارات تاني");
       if (t.id === "quiet-on") { $("quiet-fields").hidden = !t.checked; saveQuiet(); }
       if (t.id === "quiet-start" || t.id === "quiet-end") saveQuiet();
       if (t.id === "summary-on") { $("summary-fields").hidden = !t.checked; saveSummary(); }

@@ -51,6 +51,7 @@ type Config = {
 type Member = {
   user_id: string; display_name: string; removed: boolean; tz: string;
   quiet_start: number | null; quiet_end: number | null; summary_hour: number | null; last_summary_on: string | null;
+  muted: boolean;
 };
 type Sub = { endpoint: string; p256dh: string; auth: string; member: string; user_id: string | null };
 type Message = { title: string; body: string; url: string; tag: string };
@@ -108,7 +109,7 @@ class Sender {
         const member = s.user_id ? this.byUser.get(s.user_id) : undefined;
         return { sub: s, member, name: member?.display_name ?? s.member };
       })
-      .filter((t) => !t.member?.removed);
+      .filter((t) => !t.member?.removed && !t.member?.muted);
   }
   async send(sub: Sub, msg: Message, urgent = false) {
     try {
@@ -370,7 +371,7 @@ Deno.serve(async (req) => {
       return new Response("forbidden", { status: 403 });
     }
     const [members, subs] = await Promise.all([
-      getJson<Member[]>("members?select=user_id,display_name,removed,tz,quiet_start,quiet_end,summary_hour,last_summary_on"),
+      getJson<Member[]>("members?select=user_id,display_name,removed,tz,quiet_start,quiet_end,summary_hour,last_summary_on,muted"),
       getJson<Sub[]>("push_subscriptions?select=endpoint,p256dh,auth,member,user_id"),
     ]);
     const sender = new Sender(cfg, members, subs);
