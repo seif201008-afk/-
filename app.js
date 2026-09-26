@@ -29,6 +29,7 @@
   const TABLE = cfg.TABLE || "team_problems";
   const BUCKET = "problem-images";
   const CHAT_BUCKET = "chat-files";
+  const AVATAR_BUCKET = "avatars";
   const MAX_IMAGES = 10;
   const MAX_BYTES = 5 * 1024 * 1024;
   const MAX_FILE = 10 * 1024 * 1024;
@@ -186,8 +187,14 @@
   const fromLocalInput = (v) => (v ? new Date(v).toISOString() : null);
 
   const HUES = [212, 158, 28, 268, 340, 190, 96, 8];
+  // بيدوّر على صورة العضو بالاسم؛ لو مفيش، بيرجع أول حرف بلون ثابت زي ما كان
+  function avatarPathOf(name) {
+    return roster?.find((r) => same(r.display_name, name))?.avatar_path || null;
+  }
   function avatar(name, cls = "") {
     const n = String(name || "؟").trim() || "؟";
+    const path = avatarPathOf(n);
+    if (path) return `<span class="avatar has-photo ${cls}" aria-hidden="true"><img src="${esc(avatarUrl(path))}" alt="" loading="lazy" /></span>`;
     let h = 0;
     for (const c of n) h = (h * 31 + c.codePointAt(0)) >>> 0;
     return `<span class="avatar ${cls}" style="--h:${HUES[h % HUES.length]}" aria-hidden="true">${esc([...n][0])}</span>`;
@@ -308,7 +315,7 @@
     return data;
   }
 
-  const ME_COLS = "user_id,display_name,joined_at,last_seen,removed,availability,status_note,quiet_start,quiet_end,summary_hour,tz,muted,push_wanted";
+  const ME_COLS = "user_id,display_name,joined_at,last_seen,removed,availability,status_note,quiet_start,quiet_end,summary_hour,tz,muted,push_wanted,avatar_path";
   const store = {
     join: () => {
       const meta = sessionUser()?.user_metadata || {};
@@ -369,6 +376,14 @@
     ping: (device, here, viewing) => must(db.rpc("presence_ping", { p_device: device, p_here: here, p_viewing: viewing })),
     presence: () => must(db.rpc("team_presence")),
     adminSetRemoved: (u, removed) => must(db.rpc("admin_set_removed", { p_user: u, p_removed: removed })),
+    async uploadAvatar({ blob, ext }) {
+      const path = `${me.user_id}/${uid()}.${ext}`;
+      const { error } = await db.storage.from(AVATAR_BUCKET).upload(path, blob, {
+        contentType: blob.type || "image/jpeg", cacheControl: "31536000", upsert: false,
+      });
+      if (error) throw Object.assign(new Error(error.message || "upload failed"), { storage: true });
+      return path;
+    },
 
     async uploadImage({ blob, ext }) {
       const path = `${new Date().toISOString().slice(0, 7)}/${uid()}.${ext}`;
@@ -416,6 +431,7 @@
     return publicUrl(BUCKET, ref);
   }
   const attUrl = (a) => a.url || publicUrl(CHAT_BUCKET, a.path);
+  const avatarUrl = (path) => (path ? publicUrl(AVATAR_BUCKET, path) : "");
 
   function loadImage(file) {
     return new Promise((resolve, reject) => {
@@ -450,6 +466,61 @@
     if (!blob) throw fail("bad-image");
     if (blob.size > MAX_BYTES) throw fail("too-big");
     return { blob, ext: "jpg" };
+  }
+
+  // بتقص الصورة كاريه من النص وتصغّرها عشان تتحط أفتار
+  async function prepareAvatar(file) {
+    if (!file || !/^image\//.test(file.type)) throw fail("not-image");
+    const img = await loadImage(file);
+    const side = Math.min(img.naturalWidth, img.naturalHeight);
+    const size = Math.min(320, side);
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+    const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.85));
+    if (!blob) throw fail("bad-image");
+    return { blob, ext: "jpg" };
+  }
+
+  async function pickAvatar(file) {
+    const old = me.avatar_path;
+    try {
+      const prepared = await prepareAvatar(file);
+      const path = await store.uploadAvatar(prepared);
+      await store.updateMe({ avatar_path: path });
+      me.avatar_path = path;
+      const mine = roster.find((r) => r.user_id === me.user_id);
+      if (mine) mine.avatar_path = path;
+      if (old) store.removeFiles(AVATAR_BUCKET, [old]);
+      toast("اتغيّرت صورتك");
+      renderMe();
+      renderView(true);
+      renderTabs();
+    } catch (err) {
+      console.error(err);
+      toast("مقدرتش أحفظ الصورة: " + friendlyError(err));
+    }
+  }
+
+  async function removeAvatar() {
+    const old = me.avatar_path;
+    if (!old) return;
+    try {
+      await store.updateMe({ avatar_path: null });
+      me.avatar_path = null;
+      const mine = roster.find((r) => r.user_id === me.user_id);
+      if (mine) mine.avatar_path = null;
+      store.removeFiles(AVATAR_BUCKET, [old]);
+      toast("اتمسحت صورتك");
+      renderMe();
+      renderView(true);
+      renderTabs();
+    } catch (err) {
+      console.error(err);
+      toast("مقدرتش أمسح الصورة: " + friendlyError(err));
+    }
   }
 
   // ============ الدخول ============
@@ -1830,7 +1901,11 @@
           <div class="profile-row">
             ${avatar(myName(), "lg")}
             <div><b>${esc(myName())}</b><span class="sub" dir="ltr">${esc(sessionUser()?.email || me.email || "")}</span>
-</div>
+              <div class="profile-actions">
+                <button type="button" class="link-btn" data-action="avatar-pick">${me.avatar_path ? "غيّر الصورة" : "ضيف صورة"}</button>
+                ${me.avatar_path ? `<button type="button" class="link-btn danger" data-action="avatar-remove">امسح الصورة</button>` : ""}
+              </div>
+            </div>
           </div>
           <div class="field">
             <label for="set-name">اسمك في الفريق</label>
@@ -3761,6 +3836,8 @@
         case "new": return go({ view: "new" });
         case "go-problem": return go({ view: "issue", id: Number(btn.dataset.id) });
         case "pick-images": case "add-images": return $("file-input").click();
+        case "avatar-pick": return $("avatar-input").click();
+        case "avatar-remove": return removeAvatar();
         case "unpick": return removeDraftImage(btn.dataset.key);
         case "view-image":
           return openLightbox({ srcs: imagesOf(i).map(imageUrl), refs: imagesOf(i), index: Number(btn.dataset.index), issueId: route.id, deletable: true });
@@ -3862,6 +3939,11 @@
       const files = [...e.target.files];
       e.target.value = "";
       handleFiles(files, "problem");
+    });
+    $("avatar-input").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      e.target.value = "";
+      if (file) pickAvatar(file);
     });
     $("chat-file-input").addEventListener("change", (e) => {
       const files = [...e.target.files];

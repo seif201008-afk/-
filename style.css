@@ -392,6 +392,8 @@ textarea.input { resize: vertical; min-height: 72px; }
   line-height: 1;
 }
 .avatar.sm { width: 22px; height: 22px; font-size: 11px; }
+.avatar.has-photo { background: var(--field); overflow: hidden; }
+.avatar.has-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 /* ================= المحتوى ================= */
 .main {
@@ -1519,6 +1521,7 @@ select.input { cursor: pointer; }
 .profile-row { display: flex; align-items: center; gap: 12px; }
 .profile-row > div { display: grid; justify-items: start; gap: 2px; min-width: 0; }
 .profile-row .sub { font-size: 13px; overflow-wrap: anywhere; }
+.profile-actions { display: flex; gap: 12px; margin-top: 4px; }
 .avatar.lg { width: 48px; height: 48px; font-size: 20px; }
 .inline { display: flex; gap: 8px; }
 .inline .input { flex: 1; min-width: 0; }

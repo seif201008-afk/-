@@ -103,6 +103,8 @@ create table if not exists public.members (
 create unique index if not exists members_display_name_key on public.members (lower(btrim(display_name)));
 -- قفل كل الإشعارات دلوقتي، على طول، لحد ما العضو يرجّعها تاني (مختلف عن ساعات الهدوء اللي بتتحدد بالوقت)
 alter table public.members add column if not exists muted boolean not null default false;
+-- صورة العضو بدل أول حرف من اسمه (مسار في مخزن avatars، فاضي = مفيش صورة)
+alter table public.members add column if not exists avatar_path text;
 -- هل العضو ده فعّل إشعارات الموبايل من قبل؟ ده بيتحدّث من أي جهاز فعّلها منه أو وقّفها،
 -- عشان لما يدخل من جهاز جديد نفضل نفكّره لحد ما يفعّلها هناك برضو (كل جهاز محتاج إذن المتصفح بنفسه، مرة واحدة)
 alter table public.members add column if not exists push_wanted boolean not null default false;
@@ -258,10 +260,12 @@ begin
 end $$;
 
 -- قايمة الفريق: مين جوه، ومين مستني مكان، ومين اتشال (الإيميلات بتظهر للأدمن بس)
+drop function if exists public.team_roster();
 create or replace function public.team_roster()
 returns table (
   user_id uuid, display_name text, email text, joined_at timestamptz, last_seen timestamptz,
-  removed boolean, availability text, status_note text, is_admin boolean, active boolean, rank int
+  removed boolean, availability text, status_note text, is_admin boolean, active boolean, rank int,
+  avatar_path text
 ) language sql stable security definer set search_path = public as $$
   with s as (
     select member_limit, lower(coalesce(admin_email, '')) as admin from public.team_settings where id = 1
@@ -277,7 +281,8 @@ returns table (
          -- محدش غير الأدمن نفسه يعرف مين الأدمن
          case when public.is_admin() then lower(m.email) = (select admin from s) else false end,
          (not m.removed and coalesce(r.rn, 1000000) <= (select member_limit from s)),
-         coalesce(r.rn, 0)::int
+         coalesce(r.rn, 0)::int,
+         m.avatar_path
   from public.members m
   left join ranked r on r.user_id = m.user_id
   where public.is_team_member()
@@ -574,9 +579,9 @@ create policy "members update self" on public.members for update to authenticate
   using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 -- الإيميلات مش ظاهرة للأعضاء (الأدمن بيشوفها من team_roster)
 grant select (user_id, display_name, joined_at, last_seen, removed, availability, status_note,
-              quiet_start, quiet_end, summary_hour, tz, muted, push_wanted)
+              quiet_start, quiet_end, summary_hour, tz, muted, push_wanted, avatar_path)
   on public.members to authenticated;
-grant update (display_name, availability, status_note, quiet_start, quiet_end, summary_hour, tz, last_seen, muted, push_wanted)
+grant update (display_name, availability, status_note, quiet_start, quiet_end, summary_hour, tz, last_seen, muted, push_wanted, avatar_path)
   on public.members to authenticated;
 
 -- سجل التغييرات (بيتكتب من قاعدة البيانات لوحدها)
@@ -1141,12 +1146,22 @@ do $$ begin
   values ('chat-files', 'chat-files', true, 10485760)
   on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit;
 
+  -- صور الأعضاء الشخصية، لحد 3 ميجا
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  values ('avatars', 'avatars', true, 3145728, array['image/jpeg', 'image/png', 'image/webp'])
+  on conflict (id) do update
+    set public = true, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+
   drop policy if exists "team images read"   on storage.objects;
   drop policy if exists "team images upload" on storage.objects;
   drop policy if exists "team images delete" on storage.objects;
   drop policy if exists "team files read"    on storage.objects;
   drop policy if exists "team files upload"  on storage.objects;
   drop policy if exists "team files delete"  on storage.objects;
+  drop policy if exists "avatars read"        on storage.objects;
+  drop policy if exists "avatars write own"   on storage.objects;
+  drop policy if exists "avatars update own"  on storage.objects;
+  drop policy if exists "avatars delete own"  on storage.objects;
 
   create policy "team files read" on storage.objects for select to authenticated
     using (bucket_id in ('problem-images', 'chat-files') and (select public.is_team_member()));
@@ -1154,6 +1169,17 @@ do $$ begin
     with check (bucket_id in ('problem-images', 'chat-files') and (select public.is_team_member()));
   create policy "team files delete" on storage.objects for delete to authenticated
     using (bucket_id in ('problem-images', 'chat-files') and (select public.is_team_member()));
+
+  -- صورة العضو: أي عضو فاضل يشوف صور الكل، لكن يرفع أو يمسح صورته بس (المسار أول جزء فيه لازم يكون uid بتاعه)
+  create policy "avatars read" on storage.objects for select to authenticated
+    using (bucket_id = 'avatars' and (select public.is_team_member()));
+  create policy "avatars write own" on storage.objects for insert to authenticated
+    with check (bucket_id = 'avatars' and (select public.is_team_member())
+                and (storage.foldername(name))[1] = (select auth.uid()::text));
+  create policy "avatars update own" on storage.objects for update to authenticated
+    using (bucket_id = 'avatars' and (storage.foldername(name))[1] = (select auth.uid()::text));
+  create policy "avatars delete own" on storage.objects for delete to authenticated
+    using (bucket_id = 'avatars' and (storage.foldername(name))[1] = (select auth.uid()::text));
 exception when others then
   raise notice 'storage setup skipped: %', sqlerrm;
 end $$;
