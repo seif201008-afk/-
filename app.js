@@ -5,6 +5,7 @@
   const cfg = window.APP_CONFIG || {};
   const $ = (id) => document.getElementById(id);
   const LOCALE = "ar-EG-u-nu-latn";
+  const BASE_TITLE = document.title;
 
   // ============ إعدادات الجهاز ده بس (مش بتتزامن) ============
   const memory = {};
@@ -765,6 +766,12 @@
     const chatUnreadAll = totalChatUnread();
     $("nav-chat").dataset.unread = chatUnreadAll ? String(chatUnreadAll) : "";
     $("menu-dot").hidden = !chatUnreadAll && !issues.some((i) => unreadCount(i.id) > 0);
+    updateTitleBadge(chatUnreadAll + issues.reduce((s, i) => s + unreadCount(i.id), 0));
+  }
+
+  // العدد بجنب اسم الموقع في التبويب، زي الإيميل: رسالة واحدة مشوفتهاش = "(1)"، لحد ما تفتحها
+  function updateTitleBadge(n) {
+    document.title = n ? `(${n > 99 ? "99+" : n}) ${BASE_TITLE}` : BASE_TITLE;
   }
 
   function listItem(i) {
