@@ -1010,6 +1010,9 @@ select.input { cursor: pointer; }
   box-shadow: 0 0 0 2px var(--bg);
 }
 .presence-dot.on { background: var(--online); }
+.presence-dot.idle { background: var(--open); }
+.m-status.idle { color: var(--open); font-weight: 600; }
+.stack-item.idle { opacity: 0.45; }
 .member-id { min-width: 0; }
 .member-id h3 { margin: 0; font-size: 16px; font-weight: 700; }
 .m-status { display: block; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }

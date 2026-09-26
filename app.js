@@ -578,8 +578,11 @@
         const map = new Map();
         Object.values(presenceCh.presenceState()).flat().forEach((p) => {
           if (!p?.uid || !p?.name) return;
-          const cur = map.get(p.uid) || { uid: p.uid, name: p.name, availability: p.availability || "available", viewing: [], typing: [] };
-          if (p.viewing) cur.viewing.push(p.viewing);
+          const cur = map.get(p.uid) || { uid: p.uid, name: p.name, availability: p.availability || "available", viewing: [], typing: [], here: false };
+          // لو أي جهاز من أجهزته الموقع قدامه، يبقى فاتح. غير كده موجود بس في الخلفية
+          const here = p.here !== false;
+          cur.here = cur.here || here;
+          if (p.viewing && here) cur.viewing.push(p.viewing);
           if (p.typing) cur.typing.push(p.typing);
           map.set(p.uid, cur);
         });
@@ -593,19 +596,25 @@
     if (!presenceCh || !me) return;
     Promise.resolve(presenceCh.track({
       uid: me.user_id, name: myName(), availability: me.availability,
+      here: pageHere(),
       viewing: route.view === "issue" ? route.id : null,
       typing: typingKey,
     })).catch(() => {});
   }
 
+  // الموقع قدام الشخص فعلًا (مش في تاب تاني ولا الكروم متصغّر)
+  const pageHere = () => document.visibilityState === "visible" && document.hasFocus();
   function renderPresence() {
-    const list = [...online].sort((a, b) => (a.uid === me?.user_id ? -1 : b.uid === me?.user_id ? 1 : 0));
-    $("presence-text").textContent = list.length ? `فاتحين دلوقتي · ${list.length}` : "محدش فاتح دلوقتي";
+    const list = [...online].sort((a, b) => (a.uid === me?.user_id ? -1 : b.uid === me?.user_id ? 1 : 0) || (b.here - a.here));
+    const here = list.filter((o) => o.here).length;
+    const away = list.length - here;
+    $("presence-text").textContent = !list.length ? "محدش فاتح دلوقتي"
+      : `فاتحين دلوقتي · ${here}${away ? ` · ${away} في الخلفية` : ""}`;
     const shown = list.slice(0, 5);
     $("presence-avatars").innerHTML =
-      shown.map((o) => `<span class="stack-item" title="${esc(o.name)}">${avatar(o.name, "sm")}</span>`).join("") +
+      shown.map((o) => `<span class="stack-item${o.here ? "" : " idle"}" title="${esc(o.name)}${o.here ? "" : " · الموقع مش قدامه"}">${avatar(o.name, "sm")}</span>`).join("") +
       (list.length > shown.length ? `<span class="stack-more">+${list.length - shown.length}</span>` : "");
-    $("nav-team").dataset.count = list.length ? String(list.length) : "";
+    $("nav-team").dataset.count = here ? String(here) : "";
     renderViewers();
     renderTyping();
     if (route.view === "team") renderView();
@@ -1608,22 +1617,25 @@
     const active = activeRoster();
     const waiting = roster.filter((r) => !r.active && !r.removed);
     const removed = roster.filter((r) => r.removed);
-    const onlineCount = active.filter((r) => isOnline(r.display_name)).length;
+    const onlineCount = active.filter((r) => onlineEntry(r.display_name)?.here).length;
 
     const card = (r) => {
       const isMe = r.user_id === me.user_id;
-      const on = isOnline(r.display_name);
       const o = onlineEntry(r.display_name);
+      const on = !!o;
+      const idle = on && !o.here;
       const viewing = o?.viewing.map(findIssue).filter(Boolean)[0];
       const av = AVAILABILITY[r.availability] || AVAILABILITY.available;
       const stats = memberStats(r.display_name);
-      const status = on
+      const status = idle
+        ? `<span class="m-status idle">موجود، بس الموقع مش قدامه دلوقتي</span>`
+        : on
         ? `<span class="m-status on">فاتح دلوقتي${viewing ? ` · بيبص على <a href="#p${viewing.id}">«${esc(viewing.title)}»</a>` : ""}</span>`
         : `<span class="m-status">آخر ظهور ${esc(ago(r.last_seen))}</span>`;
       return `
         <article class="member${on ? " online" : ""}">
           <div class="member-top">
-            <span class="member-av">${avatar(r.display_name)}<span class="presence-dot${on ? " on" : ""}" aria-hidden="true"></span></span>
+            <span class="member-av">${avatar(r.display_name)}<span class="presence-dot${idle ? " idle" : on ? " on" : ""}" aria-hidden="true"></span></span>
             <div class="member-id">
               <h3>${esc(r.display_name)}${isMe ? ' <span class="tag-sm">إنت</span>' : ""}</h3>
               ${status}
@@ -1740,6 +1752,14 @@
             <button type="button" class="btn btn-primary" id="push-action" data-action="push-toggle" hidden></button>
           </div>
           <ol id="push-steps" class="push-steps" hidden></ol>
+
+          <div class="set-row">
+            <label class="switch" for="sound-on">
+              <input id="sound-on" type="checkbox" ${soundOn ? "checked" : ""} />
+              <span class="switch-track" aria-hidden="true"></span>
+              <span class="switch-text"><b>صوت للرسايل الجديدة</b><span class="sub">صوت بسيط مع كل رسالة توصلك وإنت فاتح الموقع، على الجهاز ده</span></span>
+            </label>
+          </div>
 
           <div class="set-row">
             <label class="switch" for="quiet-on">
@@ -2099,6 +2119,7 @@
   const keepPending = (rows, old) => [...(rows || []), ...old.filter((m) => m.pending)];
   async function reloadComments() {
     comments = keepPending(await soft(store.listComments, comments.filter((c) => !c.pending)), comments);
+    noticeNew("p", comments);
     renderChat();
     renderList();
     renderTabs();
@@ -2149,6 +2170,7 @@
   }
   async function reloadChatMessages() {
     chatMsgs = keepPending(await soft(store.listChatMessages, chatMsgs.filter((m) => !m.pending)), chatMsgs);
+    noticeNew("c", chatMsgs);
     afterChatChange();
   }
   async function reloadChatHides() {
@@ -2389,6 +2411,49 @@
     if (window.matchMedia("(max-width: 860px)").matches) openSidebar();
     const n = issues.filter((i) => isOpen(i) && same(i.assignee, name)).length;
     toast(n ? `${same(name, myName()) ? "إنت مسؤول" : `${name} مسؤول`} عن ${plural(n, WORDS.problem)} مفتوحة` : "مفيش مشاكل مفتوحة متعيّنة ليه");
+  }
+
+  // ---------- صوت الرسايل الجديدة ----------
+  const SOUND_KEY = "team_problems_sound";
+  let soundOn = local.get(SOUND_KEY) !== "off";
+  let audioCtx = null;
+  // المتصفح مبيسمحش بالصوت غير بعد أول دوسة في الصفحة
+  function unlockAudio() {
+    try {
+      audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+    } catch {}
+  }
+  let lastDing = 0;
+  function ding() {
+    if (!soundOn || !audioCtx || Date.now() - lastDing < 1200) return;
+    lastDing = Date.now();
+    try {
+      const t = audioCtx.currentTime;
+      [[880, 0], [1320, 0.12]].forEach(([f, d]) => {
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.type = "sine";
+        o.frequency.value = f;
+        g.gain.setValueAtTime(0.0001, t + d);
+        g.gain.exponentialRampToValueAtTime(0.18, t + d + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.25);
+        o.connect(g).connect(audioCtx.destination);
+        o.start(t + d);
+        o.stop(t + d + 0.3);
+      });
+    } catch {}
+  }
+  // بنرن مرة لما توصل رسالة جديدة من حد تاني في أي محادثة أنا فيها
+  const seenMsgs = { p: null, c: null };
+  function noticeNew(kind, rows) {
+    const ids = new Set((rows || []).map((m) => m.id));
+    const before = seenMsgs[kind];
+    seenMsgs[kind] = ids;
+    if (!before) return;
+    const fresh = (rows || []).some((m) => !before.has(m.id) && !m.pending && !m.deleted_at && !isMine(m) &&
+      Date.now() - new Date(m.created_at) < 5 * 60e3 && (kind === "p" || isParticipant(m.group_id)));
+    if (fresh) ding();
   }
 
   // ---------- الرسايل: إرسال ومرفقات ----------
@@ -3484,6 +3549,11 @@
       if (t.id === "urgent") draft.urgent = t.checked;
       if (t.classList.contains("prop-input") || t.classList.contains("prop-select")) changeField(t.dataset.field, t.value);
       if (t.id === "set-note") saveSetting({ status_note: t.value.trim() || null }, "اتحفظت رسالتك للفريق");
+      if (t.id === "sound-on") {
+        soundOn = t.checked;
+        local.set(SOUND_KEY, soundOn ? "on" : "off");
+        if (soundOn) { unlockAudio(); lastDing = 0; ding(); }
+      }
       if (t.id === "quiet-on") { $("quiet-fields").hidden = !t.checked; saveQuiet(); }
       if (t.id === "quiet-start" || t.id === "quiet-end") saveQuiet();
       if (t.id === "summary-on") { $("summary-fields").hidden = !t.checked; saveSummary(); }
@@ -3739,8 +3809,12 @@
     });
 
     document.addEventListener("visibilitychange", () => {
+      trackPresence();
       if (document.visibilityState === "visible") { touch(); maybeMarkRead(); }
     });
+    window.addEventListener("focus", trackPresence);
+    ["pointerdown", "keydown"].forEach((ev) => document.addEventListener(ev, unlockAudio, { passive: true }));
+    window.addEventListener("blur", trackPresence);
 
     setInterval(() => {
       if ($("now")) $("now").textContent = dateTime(new Date().toISOString());
