@@ -15,6 +15,7 @@
   };
   const TAB_KEY = "team_problems_tab";
   const NUDGE_KEY = "team_problems_push_nudge";
+  const NUDGE_AGAIN_KEY = "team_problems_push_nudge_again";
 
   // ============ الاتصال بـ Supabase ============
   const configured = Boolean(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY);
@@ -307,7 +308,7 @@
     return data;
   }
 
-  const ME_COLS = "user_id,display_name,joined_at,last_seen,removed,availability,status_note,quiet_start,quiet_end,summary_hour,tz,muted";
+  const ME_COLS = "user_id,display_name,joined_at,last_seen,removed,availability,status_note,quiet_start,quiet_end,summary_hour,tz,muted,push_wanted";
   const store = {
     join: () => {
       const meta = sessionUser()?.user_metadata || {};
@@ -3420,8 +3421,20 @@
     navigator.serviceWorker.addEventListener("message", (e) => {
       if (e.data?.type === "open") go(parseHash(e.data.hash));
     });
-    resyncPush();
+    await healPush();
     nudgePush();
+  }
+
+  // الإذن كان موافق عليه قبل كده على الجهاز ده، بس الاشتراك ضاع (نادر، بيحصل لو المتصفح مسح بيانات قديمة):
+  // نرجّعه من غير أي بوب-أب، لأن الإذن نفسه موافق عليه فعلًا
+  async function healPush() {
+    if (!PUSH_KEY || Notification?.permission !== "granted") return resyncPush();
+    try {
+      const reg = swReg || (await navigator.serviceWorker.ready);
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(PUSH_KEY) });
+      await savePushSub(sub);
+    } catch (e) { console.warn(e); }
   }
 
   async function currentSub() {
@@ -3480,6 +3493,12 @@
       console.warn(e);
     }
   }
+  // نفس الحالة اللي سايبها بيها آخر مرة (على أي جهاز)، عشان لو دخل من جهاز جديد نعرف نفكّره
+  function savePushWanted(on) {
+    if (!me || me.push_wanted === on) return;
+    me.push_wanted = on;
+    store.updateMe({ push_wanted: on }).catch((e) => console.warn(e));
+  }
 
   async function enablePush() {
     try {
@@ -3493,6 +3512,7 @@
       if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(PUSH_KEY) });
       await savePushSub(sub);
       local.set(NUDGE_KEY, "done");
+      savePushWanted(true);
       notice("");
       toast("اتفعّلت الإشعارات على الجهاز ده");
     } catch (err) {
@@ -3502,23 +3522,38 @@
     updatePushUI();
   }
 
+  // quiet=true بس لما نقفل الاشتراك من غير قرار العضو (تسجيل خروج)، فمش بنلمس رغبته العامة
   async function disablePush({ quiet = false } = {}) {
     const sub = await currentSub().catch(() => null);
     if (sub) {
       try { await db.rpc("delete_push_subscription", { p_endpoint: sub.endpoint }); } catch (e) { console.warn(e); }
       await sub.unsubscribe().catch(() => {});
     }
-    if (!quiet) { toast("وقفت الإشعارات على الجهاز ده"); updatePushUI(); }
+    if (!quiet) {
+      savePushWanted(false);
+      toast("وقفت الإشعارات على الجهاز ده");
+      updatePushUI();
+    }
   }
 
+  // بيفكّر العضو لحد ما يفعّل الإشعارات على كل جهاز بيدخل منه، لو هو أصلًا فعّلها على جهاز تاني
+  const NUDGE_AGAIN_MS = 24 * 3600e3;
   async function nudgePush() {
-    if (local.get(NUDGE_KEY)) return;
     const st = await pushStatus();
     if (st !== "off" && st !== "ios-install") return;
-    notice("فعّل الإشعارات عشان يوصلك جديد الفريق على الجهاز ده حتى لو الموقع مقفول.", {
+    const persistent = !!me?.push_wanted;
+    if (!persistent && local.get(NUDGE_KEY)) return;
+    if (persistent) {
+      const last = Number(local.get(NUDGE_AGAIN_KEY) || 0);
+      if (Date.now() - last < NUDGE_AGAIN_MS) return;
+      local.set(NUDGE_AGAIN_KEY, String(Date.now()));
+    }
+    notice(persistent
+      ? "إنت مفعّل الإشعارات على جهاز تاني بنفس حسابك. فعّلها هنا كمان عشان توصلك على الجهاز ده."
+      : "فعّل الإشعارات عشان يوصلك جديد الفريق على الجهاز ده حتى لو الموقع مقفول.", {
       action: "فعّلها",
       onAction: () => go({ view: "settings" }),
-      onClose: () => local.set(NUDGE_KEY, "dismissed"),
+      onClose: () => { if (!persistent) local.set(NUDGE_KEY, "dismissed"); },
     });
   }
 

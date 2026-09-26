@@ -103,6 +103,9 @@ create table if not exists public.members (
 create unique index if not exists members_display_name_key on public.members (lower(btrim(display_name)));
 -- قفل كل الإشعارات دلوقتي، على طول، لحد ما العضو يرجّعها تاني (مختلف عن ساعات الهدوء اللي بتتحدد بالوقت)
 alter table public.members add column if not exists muted boolean not null default false;
+-- هل العضو ده فعّل إشعارات الموبايل من قبل؟ ده بيتحدّث من أي جهاز فعّلها منه أو وقّفها،
+-- عشان لما يدخل من جهاز جديد نفضل نفكّره لحد ما يفعّلها هناك برضو (كل جهاز محتاج إذن المتصفح بنفسه، مرة واحدة)
+alter table public.members add column if not exists push_wanted boolean not null default false;
 
 -- ---------- سجل التغييرات ----------
 create table if not exists public.problem_events (
@@ -571,9 +574,9 @@ create policy "members update self" on public.members for update to authenticate
   using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 -- الإيميلات مش ظاهرة للأعضاء (الأدمن بيشوفها من team_roster)
 grant select (user_id, display_name, joined_at, last_seen, removed, availability, status_note,
-              quiet_start, quiet_end, summary_hour, tz, muted)
+              quiet_start, quiet_end, summary_hour, tz, muted, push_wanted)
   on public.members to authenticated;
-grant update (display_name, availability, status_note, quiet_start, quiet_end, summary_hour, tz, last_seen, muted)
+grant update (display_name, availability, status_note, quiet_start, quiet_end, summary_hour, tz, last_seen, muted, push_wanted)
   on public.members to authenticated;
 
 -- سجل التغييرات (بيتكتب من قاعدة البيانات لوحدها)
