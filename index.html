@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=202609260156" />
+<link rel="stylesheet" href="style.css?v=202609260011" />
 <link rel="manifest" href="manifest.webmanifest" />
 <meta name="theme-color" content="#16181d" />
 <link rel="icon" type="image/png" href="icons/icon-192.png" />
@@ -17,15 +17,18 @@
 </head>
 <body>
 
-<!-- الدخول: محدش يشوف حاجة قبل ما يدخل بحساب جوجل -->
-<div id="auth" class="auth" dir="rtl">
-  <div class="auth-card">
+<!-- شاشة الباسورد: بتظهر بس لو فيه باسورد في config.js -->
+<div id="lock" class="lock" dir="rtl" hidden>
+  <form id="lock-form" class="lock-card" novalidate>
     <span class="brand-mark brand-mark-lg" aria-hidden="true">
       <svg viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1" /><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /><path d="m9 14 2 2 4-4" /></svg>
     </span>
     <h1>سجل مشاكل الفريق</h1>
-    <div id="auth-body" class="auth-body"><p class="muted">بيحمّل…</p></div>
-  </div>
+    <p>اكتب باسورد الفريق عشان تدخل.</p>
+    <input id="lock-input" class="input" type="password" placeholder="الباسورد" autocomplete="current-password" />
+    <p id="lock-error" class="field-error" hidden>الباسورد غلط، جرّب تاني.</p>
+    <button type="submit" class="btn btn-primary btn-lg btn-block">دخول</button>
+  </form>
 </div>
 
 <div id="app" class="shell" dir="rtl" lang="ar" hidden>
@@ -91,13 +94,17 @@
     <nav id="list" class="sb-list" aria-label="قايمة المشاكل"></nav>
 
     <div class="sb-foot">
-      <button id="me-btn" class="me" type="button" data-nav="settings">
-        <span id="me-av" class="me-av"></span>
+      <button id="me-btn" class="me" type="button" aria-label="غيّر اسمك">
+        <span id="me-av"></span>
         <span class="me-text">
           <span id="me-name" class="me-name"></span>
-          <span class="me-sub">حسابي والإعدادات</span>
+          <span id="me-status" class="me-status"></span>
         </span>
-        <svg class="i me-edit" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" /><circle cx="16" cy="7" r="2" /><circle cx="8" cy="17" r="2" /></svg>
+        <svg class="i me-edit" viewBox="0 0 24 24"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+      </button>
+      <button id="push-btn" class="icon-btn push-btn" type="button" aria-label="إشعارات الموبايل">
+        <svg class="i" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
+        <span class="push-dot" id="push-dot" hidden></span>
       </button>
     </div>
   </aside>
@@ -108,7 +115,6 @@
     <header class="topbar">
       <button id="menu-btn" class="icon-btn only-mobile" type="button" aria-label="افتح قايمة المشاكل">
         <svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
-        <span id="menu-dot" class="menu-dot" hidden></span>
       </button>
       <div id="crumb" class="crumb"></div>
       <div id="top-actions" class="top-actions"></div>
@@ -116,12 +122,7 @@
 
     <div id="notice" class="notice" hidden>
       <span id="notice-text"></span>
-      <span class="notice-actions">
-        <button id="notice-action" type="button" class="link-btn" hidden></button>
-        <button id="notice-close" type="button" class="icon-btn notice-close" aria-label="اقفل" hidden>
-          <svg class="i" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></svg>
-        </button>
-      </span>
+      <button id="notice-action" type="button" class="link-btn" hidden></button>
     </div>
 
     <div id="view" class="view"></div>
@@ -130,9 +131,28 @@
 
 <datalist id="names"></datalist>
 
-<!-- نافذة واحدة لكل الحوارات (الترحيب، فكّرني، اربط...) -->
-<dialog id="modal" class="dialog" dir="rtl">
-  <div id="modal-body"></div>
+<dialog id="name-dialog" class="dialog" dir="rtl">
+  <form id="name-form" method="dialog">
+    <h2 id="name-title">اسمك</h2>
+    <p id="name-desc">بيظهر جنب المشاكل اللي بتسجلها أو بتحلها، والموقع بيفتكره على الجهاز ده.</p>
+    <input id="name-input" class="input" type="text" maxlength="60" list="names" autocomplete="name" placeholder="اكتب اسمك" />
+    <div class="dialog-actions">
+      <button type="submit" value="cancel" class="btn btn-ghost" formnovalidate>إلغاء</button>
+      <button type="submit" value="save" class="btn btn-primary">حفظ</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="push-dialog" class="dialog" dir="rtl">
+  <form method="dialog">
+    <h2>إشعارات الموبايل</h2>
+    <p id="push-desc"></p>
+    <ol id="push-steps" class="push-steps" hidden></ol>
+    <div class="dialog-actions">
+      <button type="submit" value="close" class="btn btn-ghost">اقفل</button>
+      <button type="button" id="push-action" class="btn btn-primary" hidden></button>
+    </div>
+  </form>
 </dialog>
 
 <!-- عارض الصور -->
@@ -159,12 +179,11 @@
 </div>
 
 <input id="file-input" type="file" accept="image/*" multiple hidden />
-<input id="chat-file-input" type="file" multiple hidden />
 
 <div id="toast" class="toast" dir="rtl" role="status" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=202609260156"></script>
-<script src="app.js?v=202609260156"></script>
+<script src="config.js?v=202609260011"></script>
+<script src="app.js?v=202609260011"></script>
 </body>
 </html>
