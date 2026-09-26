@@ -365,6 +365,8 @@
     addGroupMember: (gid, u) => must(db.rpc("chat_group_add_member", { p_group: gid, p_user: u })),
     removeGroupMember: (gid, u) => must(db.rpc("chat_group_remove_member", { p_group: gid, p_user: u })),
     renameGroup: (gid, name) => must(db.rpc("chat_group_rename", { p_group: gid, p_name: name })),
+    ping: (device, here, viewing) => must(db.rpc("presence_ping", { p_device: device, p_here: here, p_viewing: viewing })),
+    presence: () => must(db.rpc("team_presence")),
     adminSetRemoved: (u, removed) => must(db.rpc("admin_set_removed", { p_user: u, p_removed: removed })),
 
     async uploadImage({ blob, ext }) {
@@ -567,51 +569,145 @@
     enter();
   }
 
-  // ============ مين فاتح دلوقتي ============
+  // ============ مين موجود دلوقتي ============
+  // الحقيقة متسجلة في قاعدة البيانات: كل تاب بيبعت نبض بطلب عادي (مش بالاتصال اللحظي)،
+  // فلو كروم اتصغّر ووقّف الاتصال اللحظي، النبض بيفضل شغال، وأول ما ترجع بيتبعت على طول.
+  // الاتصال اللحظي بقى بس عشان "فلان بيكتب…"، وعشان التحديث يوصل أسرع.
+  const DEVICE_ID = (() => {
+    const make = () => "d" + uid().replace(/-/g, "").slice(0, 24);
+    try {
+      let id = sessionStorage.getItem("tp_dev");
+      if (!id) { id = make(); sessionStorage.setItem("tp_dev", id); }
+      return id;
+    } catch { return make(); }
+  })();
+  const HERE_S = 70;   // التاب اللي قدامك بيبعت كل 25 ثانية
+  const ALIVE_S = 150; // التاب اللي في الخلفية بيبعت كل 50 ثانية
+  let presenceRows = [];
+  let presenceAt = Date.now();
   let presenceCh = null;
-  const isOnline = (name) => online.some((o) => same(o.name, name));
+  let liveTyping = new Map(); // uid → { name, keys }
   const onlineEntry = (name) => online.find((o) => same(o.name, name));
-
-  function startPresence() {
-    presenceCh = db.channel("team-presence", { config: { presence: { key: me.user_id } } });
-    presenceCh
-      .on("presence", { event: "sync" }, () => {
-        const map = new Map();
-        Object.values(presenceCh.presenceState()).flat().forEach((p) => {
-          if (!p?.uid || !p?.name) return;
-          const cur = map.get(p.uid) || { uid: p.uid, name: p.name, availability: p.availability || "available", viewing: [], typing: [], here: false };
-          // لو أي جهاز من أجهزته الموقع قدامه، يبقى فاتح. غير كده موجود بس في الخلفية
-          const here = p.here !== false;
-          cur.here = cur.here || here;
-          if (p.viewing && here) cur.viewing.push(p.viewing);
-          if (p.typing) cur.typing.push(p.typing);
-          map.set(p.uid, cur);
-        });
-        online = [...map.values()];
-        renderPresence();
-      })
-      .subscribe((status) => { if (status === "SUBSCRIBED") trackPresence(); });
-  }
-
-  function trackPresence() {
-    if (!presenceCh || !me) return;
-    Promise.resolve(presenceCh.track({
-      uid: me.user_id, name: myName(), availability: me.availability,
-      here: pageHere(),
-      viewing: route.view === "issue" ? route.id : null,
-      typing: typingKey,
-    })).catch(() => {});
-  }
 
   // الموقع قدام الشخص فعلًا (مش في تاب تاني ولا الكروم متصغّر)
   const pageHere = () => document.visibilityState === "visible" && document.hasFocus();
-  // اللي الموقع مفتوح عنده بس في الخلفية ممكن اتصاله اللحظي يقف، فبنعتمد كمان على آخر نبض منه
-  const recentlySeen = (r) => !!r?.last_seen && Date.now() - new Date(r.last_seen) < 3 * 60e3 && !r.removed;
+  const myViewing = () => (route.view === "issue" ? route.id : null);
+  const rowAge = (p) => p.age_s + (Date.now() - presenceAt) / 1000;
+
+  function buildOnline() {
+    const byId = new Map(activeRoster().map((r) => [r.user_id, r]));
+    const map = new Map();
+    const add = (u, here, viewing) => {
+      const r = byId.get(u);
+      if (!r) return;
+      const cur = map.get(u) || { uid: u, name: r.display_name, availability: r.availability || "available", viewing: [], typing: [], here: false };
+      cur.here = cur.here || here;
+      if (here && viewing) cur.viewing.push(viewing);
+      map.set(u, cur);
+    };
+    for (const p of presenceRows) {
+      if (p.gone) continue;
+      const age = rowAge(p);
+      if (age > ALIVE_S) continue;
+      add(p.user_id, !!p.here && age <= HERE_S, p.viewing);
+    }
+    // أنا: حالتي من الجهاز ده على طول، من غير ما أستنى السيرفر
+    if (me) add(me.user_id, pageHere(), myViewing());
+    for (const [u, t] of liveTyping) if (map.has(u)) map.get(u).typing = t.keys;
+    online = [...map.values()];
+  }
+
+  // آخر مرة كان موجود فيها (من أحدث نبض، أو من آخر دخول)
+  function lastSeenOf(r) {
+    let t = r?.last_seen ? new Date(r.last_seen).getTime() : 0;
+    for (const p of presenceRows) if (p.user_id === r?.user_id) t = Math.max(t, Date.now() - rowAge(p) * 1000);
+    return new Date(t || Date.now()).toISOString();
+  }
+
+  // ---- النبض ----
+  let pingSig = "";
+  let pingAt = 0;
+  let pingTimer;
+  async function ping(force = false) {
+    if (!started || !me) return;
+    const here = pageHere();
+    const viewing = myViewing();
+    const sig = `${here}|${viewing}`;
+    if (!force && sig === pingSig && Date.now() - pingAt < (here ? 25e3 : 50e3)) return;
+    pingSig = sig;
+    pingAt = Date.now();
+    try { await store.ping(DEVICE_ID, here, viewing); } catch (e) { pingAt = 0; console.warn(e); }
+  }
+  // حالتي اتغيرت (رجعت، صغّرت، فتحت مشكلة…): نبلّغ على طول، ونجمّع التغييرات اللي ورا بعض
+  function trackPresence() {
+    buildOnline();
+    renderPresence();
+    clearTimeout(pingTimer);
+    pingTimer = setTimeout(() => ping(), 250);
+    if (presenceCh && me) {
+      Promise.resolve(presenceCh.track({ uid: me.user_id, name: myName(), typing: typingKey })).catch(() => {});
+    }
+  }
+  // لما التاب يتقفل: نقول إننا مشينا (الطلب بيكمل حتى بعد ما الصفحة تتقفل)
+  function leaveNow() {
+    const token = authSession?.access_token;
+    if (!started || !me || !token) return;
+    pingSig = "";
+    try {
+      fetch(`${cfg.SUPABASE_URL}/rest/v1/rpc/presence_ping`, {
+        method: "POST", keepalive: true,
+        headers: { "Content-Type": "application/json", apikey: cfg.SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ p_device: DEVICE_ID, p_here: false, p_viewing: null, p_gone: true }),
+      }).catch(() => {});
+    } catch {}
+  }
+
+  // ---- مين موجود عند الباقيين ----
+  let presenceLoadAt = 0;
+  let presenceDirty = false;
+  let presenceLoadTimer;
+  async function loadPresence() {
+    presenceLoadAt = Date.now();
+    presenceDirty = false;
+    const rows = await soft(store.presence, null);
+    if (rows) { presenceRows = rows; presenceAt = Date.now(); }
+    buildOnline();
+    renderPresence();
+  }
+  // حد اتغيرت حالته: لو الموقع قدامي نحدّث (مرة واحدة لكل شوية تغييرات)، ولو في الخلفية نستنى لما أرجع
+  function onPresenceChange() {
+    if (document.visibilityState !== "visible") { presenceDirty = true; return; }
+    clearTimeout(presenceLoadTimer);
+    presenceLoadTimer = setTimeout(loadPresence, 400);
+  }
+
+  // "فلان بيكتب…" بس
+  function startPresence() {
+    const ch = db.channel("team-presence", { config: { presence: { key: me.user_id } } });
+    presenceCh = ch;
+    ch.on("presence", { event: "sync" }, () => {
+      if (presenceCh !== ch) return;
+      const map = new Map();
+      Object.values(ch.presenceState()).flat().forEach((p) => {
+        if (!p?.uid || !p?.typing) return;
+        const cur = map.get(p.uid) || { name: p.name, keys: [] };
+        cur.keys.push(p.typing);
+        map.set(p.uid, cur);
+      });
+      liveTyping = map;
+      buildOnline();
+      renderPresence();
+    })
+      .subscribe((status) => { if (status === "SUBSCRIBED" && presenceCh === ch) trackPresence(); });
+  }
+
+  // بنرسم بس لو حاجة اتغيرت فعلًا، عشان الموقع ميتقلش
+  let presenceSig = "";
   function renderPresence() {
-    const inPresence = new Set(online.map((o) => o.uid));
-    const background = activeRoster().filter((r) => !inPresence.has(r.user_id) && r.user_id !== me?.user_id && recentlySeen(r))
-      .map((r) => ({ uid: r.user_id, name: r.display_name, here: false, viewing: [], typing: [] }));
-    const list = [...online, ...background].sort((a, b) => (a.uid === me?.user_id ? -1 : b.uid === me?.user_id ? 1 : 0) || (b.here - a.here));
+    const list = [...online].sort((a, b) => (a.uid === me?.user_id ? -1 : b.uid === me?.user_id ? 1 : 0) || (b.here - a.here));
+    const sig = JSON.stringify([list.map((o) => [o.uid, o.name, o.here, o.viewing]), [...liveTyping], route.view, route.id, route.gid]);
+    if (sig === presenceSig) return;
+    presenceSig = sig;
     const here = list.filter((o) => o.here).length;
     const away = list.length - here;
     $("presence-text").textContent = !list.length ? "محدش فاتح دلوقتي"
@@ -1282,7 +1378,7 @@
 
   // مين بيكتب دلوقتي (زي واتساب)
   function typersFor(key) {
-    return online.filter((o) => o.uid !== me?.user_id && o.typing.includes(key)).map((o) => o.name);
+    return [...liveTyping].filter(([u, t]) => u !== me?.user_id && t.keys.includes(key)).map(([u, t]) => roster.find((r) => r.user_id === u)?.display_name || t.name);
   }
   function typingText(ctx) {
     const t = typersFor(ctx.key);
@@ -1628,7 +1724,7 @@
     const card = (r) => {
       const isMe = r.user_id === me.user_id;
       const o = onlineEntry(r.display_name);
-      const on = !!o || recentlySeen(r);
+      const on = !!o;
       const idle = on && !o?.here;
       const viewing = o?.viewing.map(findIssue).filter(Boolean)[0];
       const av = AVAILABILITY[r.availability] || AVAILABILITY.available;
@@ -1637,7 +1733,7 @@
         ? `<span class="m-status idle">موجود، بس الموقع مش قدامه دلوقتي</span>`
         : on
         ? `<span class="m-status on">فاتح دلوقتي${viewing ? ` · بيبص على <a href="#p${viewing.id}">«${esc(viewing.title)}»</a>` : ""}</span>`
-        : `<span class="m-status">آخر ظهور ${esc(ago(r.last_seen))}</span>`;
+        : `<span class="m-status">آخر ظهور ${esc(ago(lastSeenOf(r)))}</span>`;
       return `
         <article class="member${on ? " online" : ""}">
           <div class="member-top">
@@ -1697,7 +1793,7 @@
       </section>`;
 
     const sorted = [...active].sort((a, b) =>
-      (!!onlineEntry(b.display_name)?.here - !!onlineEntry(a.display_name)?.here) || (new Date(b.last_seen) - new Date(a.last_seen)));
+      (!!onlineEntry(b.display_name)?.here - !!onlineEntry(a.display_name)?.here) || (new Date(lastSeenOf(b)) - new Date(lastSeenOf(a))));
     return `
       <section class="page">
         <header class="view-head">
@@ -2139,6 +2235,7 @@
     if (s) settings = s;
     renderTabs();
     // عضو جديد بيظهر على طول في كل حتة: الفريق، واختيار المسؤول، والشات
+    buildOnline();
     renderPresence();
     if (changed && ["new", "issue", "chat"].includes(route.view)) renderView();
   }
@@ -3817,7 +3914,7 @@
 
     document.addEventListener("visibilitychange", () => {
       trackPresence();
-      if (document.visibilityState === "visible") { touch(); maybeMarkRead(); }
+      if (document.visibilityState === "visible") maybeMarkRead();
     });
     window.addEventListener("focus", trackPresence);
     ["pointerdown", "keydown"].forEach((ev) => document.addEventListener(ev, unlockAudio, { passive: true }));
@@ -3828,12 +3925,6 @@
       if (["issue", "team"].includes(route.view) && $("lightbox").hidden && !$("modal").open) renderView();
       if (route.view === "chat") renderConvList();
     }, 30e3);
-    setInterval(touch, 60e3);
-  }
-
-  async function touch() {
-    if (!me) return;
-    try { await store.updateMe({ last_seen: new Date().toISOString() }); } catch (e) { console.warn(e); }
   }
 
   // ============ التشغيل ============
@@ -3865,8 +3956,9 @@
 
   // ============ الاتصال اللحظي: بيرجع لوحده لو وقع ============
   let dataChannels = [];
+  let dataHandlers = {};
   function subscribeAll() {
-    dataChannels = store.subscribe({
+    dataHandlers = {
       [TABLE]: onProblemsChange,
       problem_comments: reloadComments,
       members: recheckMembership,
@@ -3877,13 +3969,15 @@
       reminders: reloadReminders,
       problem_events: () => { if (route.view === "issue" && detailTab === "history") loadHistory(route.id); },
       comment_hides: reloadCommentHides,
+      member_presence: onPresenceChange,
       chat_groups: reloadChatMeta,
       chat_group_members: reloadChatMeta,
       chat_messages: reloadChatMessages,
       chat_message_hides: reloadChatHides,
       chat_reads: reloadChatReads,
       chat_reactions: reloadChatReactions,
-    });
+    };
+    dataChannels = store.subscribe(dataHandlers);
   }
 
   const channelDead = (ch) => !ch || !["joined", "joining"].includes(ch.state);
@@ -3901,40 +3995,63 @@
         trackPresence();
       }
       // التحديث اللحظي للبيانات: لو أي قناة وقعت، نرجّعها ونجيب اللي فاتنا
-      if (dataChannels.some(channelDead)) {
-        for (const ch of dataChannels) { try { await db.removeChannel(ch); } catch {} }
-        subscribeAll();
+      const tables = Object.keys(dataHandlers);
+      const dead = tables.filter((t, i) => channelDead(dataChannels[i]));
+      if (dead.length) {
+        for (const t of dead) {
+          const i = tables.indexOf(t);
+          try { await db.removeChannel(dataChannels[i]); } catch {}
+          [dataChannels[i]] = store.subscribe({ [t]: dataHandlers[t] });
+        }
         await loadAll().catch((e) => console.warn(e));
       }
     } finally {
       healing = false;
     }
   }
+  // ساعة بتدق كل 10 ثواني من Web Worker: كروم مبيبطّأهاش لما التاب يبقى في الخلفية
+  function everyTick(fn) {
+    try {
+      const url = URL.createObjectURL(new Blob(["setInterval(() => postMessage(0), 10000);"], { type: "text/javascript" }));
+      const w = new Worker(url);
+      w.onmessage = fn;
+      return;
+    } catch {}
+    setInterval(fn, 10e3);
+  }
+
   let hiddenAt = 0;
-  async function comeBack() {
+  let lastHeal = 0;
+  function comeBack() {
     if (!started || !me) return;
-    touch();
-    try { if (!db.realtime.isConnected()) db.realtime.connect(); } catch {}
-    // نعمل قناة "مين فاتح" من جديد عشان الباقيين يشوفوا إني رجعت فورًا
-    const old = presenceCh;
-    presenceCh = null;
-    if (old) { try { await db.removeChannel(old); } catch {} }
-    startPresence();
-    // لو كنت غايب شوية، نجيب أي حاجة فاتتني
-    if (hiddenAt && Date.now() - hiddenAt > 30e3) loadAll().catch((e) => console.warn(e));
+    // أول حاجة: نقول للكل إني رجعت، ونشوف مين موجود
+    ping(true);
+    loadPresence();
+    // لو كنت غايب أكتر من دقيقتين، ممكن يكون فاتني تحديثات وأنا متصغّر
+    if (hiddenAt && Date.now() - hiddenAt > 120e3) loadAll().catch((e) => console.warn(e));
     hiddenAt = 0;
     healRealtime();
   }
   function startHealing() {
-    const wake = () => healRealtime();
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") comeBack();
-      else { hiddenAt = Date.now(); touch(); }
+      else hiddenAt = hiddenAt || Date.now();
     });
-    window.addEventListener("focus", wake);
-    window.addEventListener("online", wake);
-    window.addEventListener("pageshow", wake);
-    setInterval(wake, 20e3);
+    window.addEventListener("online", comeBack);
+    window.addEventListener("focus", () => healRealtime());
+    window.addEventListener("pageshow", (e) => { if (e.persisted) comeBack(); });
+    window.addEventListener("pagehide", leaveNow);
+    ping(true);
+    loadPresence();
+    everyTick(() => {
+      if (!started || !me) return;
+      ping();
+      if (document.visibilityState !== "visible") return;
+      // احتياطي: حتى لو الاتصال اللحظي واقع، القايمة بتتحدث كل 15 ثانية
+      if (presenceDirty || Date.now() - presenceLoadAt > 15e3) loadPresence();
+      else { buildOnline(); renderPresence(); }
+      if (Date.now() - lastHeal > 20e3) { lastHeal = Date.now(); healRealtime(); }
+    });
   }
 
   boot();

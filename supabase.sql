@@ -1153,6 +1153,58 @@ exception when others then
 end $$;
 
 -- =====================================================================
+-- 6.5) مين موجود دلوقتي
+-- كل تاب فاتح الموقع بيبعت نبض كل شوية (فاتح قدامه / في الخلفية).
+-- ده ماشي على طلبات عادية، فمبيقعش لما كروم يتصغّر أو الاتصال اللحظي يقف.
+-- =====================================================================
+create table if not exists public.member_presence (
+  device_id text primary key check (length(device_id) between 8 and 64),
+  user_id   uuid not null,
+  here      boolean not null default false,
+  viewing   bigint,
+  gone      boolean not null default false,
+  seen_at   timestamptz not null default now()
+);
+create index if not exists member_presence_user_idx on public.member_presence (user_id);
+alter table public.member_presence enable row level security;
+revoke all on public.member_presence from anon, authenticated;
+grant select on public.member_presence to authenticated;
+drop policy if exists "team reads presence" on public.member_presence;
+create policy "team reads presence" on public.member_presence
+  for select to authenticated using ((select public.is_team_member()));
+
+-- النبض: بيرجّع بس لو حاجة اتغيّرت أو عدّى وقت، عشان منزحمش الباقيين
+create or replace function public.presence_ping(p_device text, p_here boolean, p_viewing bigint default null, p_gone boolean default false)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or not public.is_team_member() then return; end if;
+  insert into public.member_presence as p (device_id, user_id, here, viewing, gone, seen_at)
+  values (p_device, auth.uid(), coalesce(p_here, false) and not coalesce(p_gone, false), p_viewing, coalesce(p_gone, false), now())
+  on conflict (device_id) do update
+    set here = excluded.here, viewing = excluded.viewing, gone = excluded.gone, seen_at = now()
+    where p.user_id = auth.uid();
+  -- "آخر ظهور" للي مش موجود: كل 10 دقايق كفاية
+  update public.members set last_seen = now()
+   where user_id = auth.uid() and (last_seen < now() - interval '10 minutes' or coalesce(p_gone, false));
+  -- الأجهزة القديمة اللي اتقفلت من زمان
+  delete from public.member_presence where seen_at < now() - interval '2 days';
+end $$;
+
+-- مين موجود، ومن آخر نبض بقاله كام ثانية (بتوقيت السيرفر، فساعة كل جهاز مش بتفرق)
+create or replace function public.team_presence()
+returns table (user_id uuid, here boolean, viewing bigint, gone boolean, age_s integer)
+language sql stable security definer set search_path = public as $$
+  select p.user_id, p.here, p.viewing, p.gone, floor(extract(epoch from now() - p.seen_at))::int
+    from public.member_presence p
+   where public.is_team_member() and p.seen_at > now() - interval '2 days';
+$$;
+
+revoke all on function public.presence_ping(text, boolean, bigint, boolean) from public, anon;
+revoke all on function public.team_presence() from public, anon;
+grant execute on function public.presence_ping(text, boolean, bigint, boolean) to authenticated;
+grant execute on function public.team_presence() to authenticated;
+
+-- =====================================================================
 -- 7) التحديث اللحظي، والإضافات، والمواعيد
 -- =====================================================================
 do $$
@@ -1161,7 +1213,7 @@ begin
   foreach t in array array['team_problems', 'problem_comments', 'members', 'team_settings', 'problem_events',
                            'comment_reactions', 'problem_reads', 'reminders', 'problem_links',
                            'chat_groups', 'chat_group_members', 'chat_messages', 'chat_message_hides',
-                           'chat_reads', 'chat_reactions', 'comment_hides'] loop
+                           'chat_reads', 'chat_reactions', 'comment_hides', 'member_presence'] loop
     if not exists (select 1 from pg_publication_tables
                    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime add table public.%I', t);
