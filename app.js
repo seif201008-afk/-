@@ -20,6 +20,8 @@
   const db = configured && window.supabase
     ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
         auth: { flowType: "pkce", persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+        // نبض الاتصال من Web Worker: كروم مبيبطّأوش لما التاب يبقى في الخلفية، فالاتصال مبيقعش
+        realtime: { worker: true, heartbeatIntervalMs: 20000 },
       })
     : null;
   const TABLE = cfg.TABLE || "team_problems";
@@ -391,11 +393,10 @@
     },
     // كل جدول في قناة لوحده، عشان لو جدول لسه متعملش ما يوقفش الباقي
     subscribe(handlers) {
-      for (const [table, fn] of Object.entries(handlers)) {
+      return Object.entries(handlers).map(([table, fn]) =>
         db.channel(`changes-${table}`)
           .on("postgres_changes", { event: "*", schema: "public", table }, fn)
-          .subscribe();
-      }
+          .subscribe());
     },
   };
 
@@ -3844,7 +3845,22 @@
     renderList();
     renderView(true);
     bindEvents();
-    store.subscribe({
+    subscribeAll();
+    startPresence();
+    loadAll().catch((e) => {
+      console.error(e);
+      notice(friendlyError(e), { error: true });
+      $("list").innerHTML = '<p class="sb-empty">مقدرناش نحمّل المشاكل.</p>';
+    });
+    if (isNew) openWelcome(1);
+    initServiceWorker();
+    startHealing();
+  }
+
+  // ============ الاتصال اللحظي: بيرجع لوحده لو وقع ============
+  let dataChannels = [];
+  function subscribeAll() {
+    dataChannels = store.subscribe({
       [TABLE]: onProblemsChange,
       problem_comments: reloadComments,
       members: recheckMembership,
@@ -3862,14 +3878,39 @@
       chat_reads: reloadChatReads,
       chat_reactions: reloadChatReactions,
     });
-    startPresence();
-    loadAll().catch((e) => {
-      console.error(e);
-      notice(friendlyError(e), { error: true });
-      $("list").innerHTML = '<p class="sb-empty">مقدرناش نحمّل المشاكل.</p>';
-    });
-    if (isNew) openWelcome(1);
-    initServiceWorker();
+  }
+
+  const channelDead = (ch) => !ch || !["joined", "joining"].includes(ch.state);
+  let healing = false;
+  async function healRealtime() {
+    if (!started || healing || !me) return;
+    healing = true;
+    try {
+      // مين فاتح: لو القناة وقعت نعملها من جديد
+      if (channelDead(presenceCh)) {
+        try { await db.removeChannel(presenceCh); } catch {}
+        presenceCh = null;
+        startPresence();
+      } else {
+        trackPresence();
+      }
+      // التحديث اللحظي للبيانات: لو أي قناة وقعت، نرجّعها ونجيب اللي فاتنا
+      if (dataChannels.some(channelDead)) {
+        for (const ch of dataChannels) { try { await db.removeChannel(ch); } catch {} }
+        subscribeAll();
+        await loadAll().catch((e) => console.warn(e));
+      }
+    } finally {
+      healing = false;
+    }
+  }
+  function startHealing() {
+    const wake = () => healRealtime();
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wake(); });
+    window.addEventListener("focus", wake);
+    window.addEventListener("online", wake);
+    window.addEventListener("pageshow", wake);
+    setInterval(wake, 20e3);
   }
 
   boot();
