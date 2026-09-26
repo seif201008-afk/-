@@ -214,6 +214,10 @@
   // ============ الحالة ============
   let me = null; // صف العضو من جدول members
   let isAdmin = false;
+  // أدوات الأدمن مخفية دايمًا، ومبتظهرش غير بـ 3 دوسات على اسم الموقع (ولحد ما التاب يتقفل)
+  let adminMode = false;
+  try { adminMode = sessionStorage.getItem("tp_x") === "1"; } catch {}
+  const showAdmin = () => isAdmin && adminMode;
   let issues = [];
   let comments = [];
   let roster = [];
@@ -1283,7 +1287,7 @@
 
   function composerHtml(ctx) {
     if (!canWrite(ctx)) {
-      return `<div class="watch-note">${icon("eye")}<span>إنت بتتابع المحادثة دي بس. محدش فيها شايف إنك فاتحها، ومش هيوصلك منها إشعارات.</span></div>`;
+      return `<div class="watch-note">${icon("eye")}<span>للقراءة بس.</span></div>`;
     }
     const files = chatFiles[ctx.key] || [];
     const hasText = !!(chatDrafts[ctx.key] || "").trim() || files.length;
@@ -1450,10 +1454,10 @@
     const byRecent = (a, b) => (b.is_team - a.is_team) ||
       (new Date(lastMsgOf(b.id)?.created_at || b.created_at) - new Date(lastMsgOf(a.id)?.created_at || a.created_at));
     const mine = chatGroups.filter((g) => isParticipant(g.id)).sort(byRecent);
-    const watched = chatGroups.filter((g) => !isParticipant(g.id)).sort(byRecent);
+    const watched = showAdmin() ? chatGroups.filter((g) => !isParticipant(g.id)).sort(byRecent) : [];
     return mine.map(convRowHtml).join("") + (watched.length ? `
       <details class="watch-group" ${watched.some((g) => route.gid === g.id) ? "open" : ""}>
-        <summary>${icon("eye")} محادثات الفريق الخاصة · ${watched.length}<span class="sub">بتظهرلك إنت بس كأدمن، ومحدش يعرف إنك بتشوفها</span></summary>
+        <summary>${icon("eye")} محادثات تانية · ${watched.length}</summary>
         ${watched.map(convRowHtml).join("")}
       </details>` : "");
   }
@@ -1621,7 +1625,7 @@
           <div class="member-top">
             <span class="member-av">${avatar(r.display_name)}<span class="presence-dot${on ? " on" : ""}" aria-hidden="true"></span></span>
             <div class="member-id">
-              <h3>${esc(r.display_name)}${isMe ? ' <span class="tag-sm">إنت</span>' : ""}${r.is_admin && isMe ? ` <span class="tag-sm admin">${icon("shield")} أدمن</span>` : ""}</h3>
+              <h3>${esc(r.display_name)}${isMe ? ' <span class="tag-sm">إنت</span>' : ""}</h3>
               ${status}
             </div>
           </div>
@@ -1634,7 +1638,7 @@
           <div class="member-actions">
             <button type="button" class="btn btn-secondary btn-sm" data-action="show-assigned" data-name="${esc(r.display_name)}">
               ${icon("user")} ${isMe ? "مشاكلي" : `مشاكل ${esc(r.display_name)}`}</button>
-            ${isAdmin && !isMe ? `<button type="button" class="btn btn-ghost btn-sm danger" data-action="admin-remove" data-uid="${r.user_id}" data-name="${esc(r.display_name)}">شيله من الفريق</button>` : ""}
+            ${showAdmin() && !isMe ? `<button type="button" class="btn btn-ghost btn-sm danger" data-action="admin-remove" data-uid="${r.user_id}" data-name="${esc(r.display_name)}">شيله من الفريق</button>` : ""}
           </div>
         </article>`;
     };
@@ -1647,11 +1651,10 @@
         ${btn || ""}
       </li>`;
 
-    const adminPanel = !isAdmin ? "" : `
+    const adminPanel = !showAdmin() ? "" : `
       <section class="card admin-card" aria-labelledby="admin-title">
         <div class="card-head">
           <h2 id="admin-title">${icon("shield")} إدارة الفريق</h2>
-          <p>إنت الأدمن. الجزء ده بيظهرلك إنت بس.</p>
         </div>
         <div class="limit-row">
           <div>
@@ -1706,7 +1709,7 @@
           <div class="profile-row">
             ${avatar(myName(), "lg")}
             <div><b>${esc(myName())}</b><span class="sub" dir="ltr">${esc(sessionUser()?.email || me.email || "")}</span>
-              ${isAdmin ? `<span class="tag-sm admin">${icon("shield")} أدمن</span>` : ""}</div>
+</div>
           </div>
           <div class="field">
             <label for="set-name">اسمك في الفريق</label>
@@ -2006,7 +2009,7 @@
       route = { view: "chat", gid: teamGroup().id };
       try { history.replaceState(null, "", hashOf(route)); } catch {}
     }
-    if (route.view === "chat" && route.gid && chatGroups.length && !groupById(route.gid)) {
+    if (route.view === "chat" && route.gid && chatGroups.length && (!groupById(route.gid) || (!isParticipant(route.gid) && !showAdmin()))) {
       route = { view: "chat" };
       try { history.replaceState(null, "", hashOf(route)); } catch {}
     }
@@ -2561,7 +2564,7 @@
     }
     if (mine && !deleted && !m.pending) items.push(["info", "check", "مين شافها"]);
     items.push(["hide", "eyeOff", "امسح من عندي"]);
-    if (!deleted && (mine || isAdmin)) items.push(["delete-all", "trash", "امسح من عند الكل", "danger"]);
+    if (!deleted && (mine || showAdmin())) items.push(["delete-all", "trash", "امسح من عند الكل", "danger"]);
     const wrap = document.querySelector(`.msg[data-mid="${mid}"] .react-add-wrap`);
     if (!wrap) return;
     wrap.insertAdjacentHTML("beforeend", `<div class="msg-menu menu-list" data-mid="${mid}" role="menu">${items.map(([act, ic, label, cls]) =>
@@ -2869,7 +2872,7 @@
   function openConvInfo(gid) {
     const g = groupById(gid);
     if (!g || g.is_team) return;
-    const canManage = g.created_by === me.user_id || isAdmin;
+    const canManage = g.created_by === me.user_id || showAdmin();
     const part = isParticipant(gid);
     const ids = memberRows(gid).map((m) => m.user_id);
     const others = activeRoster().filter((r) => !ids.includes(r.user_id));
@@ -3407,6 +3410,18 @@
 
   function bindEvents() {
     $("new-btn").addEventListener("click", () => { go({ view: "new" }); $("title")?.focus(); });
+    // 3 دوسات ورا بعض (بتشتغل على الموبايل كمان)
+    let brandTaps = [];
+    document.querySelector(".sb-head .brand").addEventListener("click", () => {
+      const now = Date.now();
+      brandTaps = [...brandTaps.filter((t) => now - t < 900), now];
+      if (brandTaps.length < 3 || !isAdmin) return;
+      brandTaps = [];
+      adminMode = !adminMode;
+      try { sessionStorage.setItem("tp_x", adminMode ? "1" : ""); } catch {}
+      toast(adminMode ? "✓" : "✕");
+      renderView(true);
+    });
     document.querySelectorAll("[data-nav]").forEach((b) => b.addEventListener("click", () => go({ view: b.dataset.nav })));
 
     $("list").addEventListener("click", (e) => {
