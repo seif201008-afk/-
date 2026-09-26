@@ -351,10 +351,11 @@ begin
     return new;
   end if;
 
+  -- أي عضو فاضل في الفريق يقدر يعدّل عنوان أو تفاصيل أي مشكلة (مش بس اللي سجّلها)
   if (new.title, coalesce(new.details, ''), coalesce(new.note, ''))
        is distinct from (old.title, coalesce(old.details, ''), coalesce(old.note, ''))
-     and not (coalesce(old.created_by = auth.uid(), false) or lower(old.author) = lower(coalesce(me, ''))) then
-    raise exception 'only_author_can_edit';
+     and me is null then
+    raise exception 'only_member_can_edit';
   end if;
 
   if new.status = 'in_progress' and old.status is distinct from 'in_progress' then

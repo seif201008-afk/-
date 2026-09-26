@@ -47,7 +47,7 @@
     if (e?.kind === "not-image") return "الملف ده مش صورة.";
     if (e?.kind === "bad-image") return "مقدرتش أفتح الصورة دي. جرّب صورة JPG أو PNG.";
     if (e?.kind === "too-big" || /maximum allowed size|too large|payload/i.test(msg)) return "الملف كبير زيادة.";
-    if (/only_author_can_edit/.test(msg)) return "اللي سجّل المشكلة بس هو اللي يقدر يعدّلها.";
+    if (/only_member_can_edit/.test(msg)) return "لازم تكون عضو في الفريق عشان تعدّل المشكلة.";
     if (/only_assignee_can_start|only_assignee_can_stop/.test(msg)) return "المسؤول عن المشكلة بس هو اللي يقدر يعلّم إنه شغال عليها.";
     if (/not_admin/.test(msg)) return "الخاصية دي للأدمن بس.";
     if (/cannot_remove_self/.test(msg)) return "مينفعش تشيل نفسك من الفريق.";
@@ -271,7 +271,6 @@
   const ageHours = (i) => (Date.now() - new Date(i.created_at)) / 3600e3;
   const isOverdue = (i) => isOpen(i) && !!i.due_at && new Date(i.due_at) < new Date();
   const isLate = (i) => isOpen(i) && (ageHours(i) > LATE_HOURS || isOverdue(i));
-  const isAuthor = (i) => !!me && (i.created_by === me.user_id || same(i.author, myName()));
   const isAssignee = (i) => same(i.assignee, myName());
   const commentsFor = (id) => comments.filter((c) => c.problem_id === id);
   const imagesOf = (i) => (Array.isArray(i?.images) ? i.images.filter(Boolean) : []);
@@ -1020,7 +1019,7 @@
     btns.push(`<button type="button" class="btn btn-ghost btn-sm${nRem ? " on" : ""}" data-action="remind">${icon("alarm")} فكّرني${nRem ? ` <span class="n">${nRem}</span>` : ""}</button>`);
     btns.push(`<button type="button" class="btn btn-ghost btn-sm" data-action="link">${icon("link")} اربط</button>`);
     const more = [
-      isAuthor(i) ? `<button type="button" data-action="edit">${icon("edit")} عدّل المشكلة</button>` : "",
+      `<button type="button" data-action="edit">${icon("edit")} عدّل المشكلة</button>`,
       `<button type="button" data-action="copy">${icon("link")} انسخ لينك المشكلة</button>`,
       `<button type="button" class="danger" data-action="delete">${icon("trash")} امسح المشكلة</button>`,
     ].join("");
