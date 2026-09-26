@@ -49,6 +49,13 @@
     if (/only_assignee_can_start|only_assignee_can_stop/.test(msg)) return "المسؤول عن المشكلة بس هو اللي يقدر يعلّم إنه شغال عليها.";
     if (/not_admin/.test(msg)) return "الخاصية دي للأدمن بس.";
     if (/cannot_remove_self/.test(msg)) return "مينفعش تشيل نفسك من الفريق.";
+    if (/only_sender_or_admin_can_delete/.test(msg)) return "اللي بعت الرسالة أو الأدمن بس هو اللي يقدر يمسحها من عند الكل.";
+    if (/assignee_not_member/.test(msg)) return "المسؤول لازم يكون عضو في الفريق.";
+    if (/only_sender_can_edit/.test(msg)) return "اللي بعت الرسالة بس هو اللي يقدر يعدّلها.";
+    if (/message_deleted/.test(msg)) return "الرسالة دي اتمسحت خلاص.";
+    if (/no_members/.test(msg)) return "اختار حد على الأقل.";
+    if (/not_allowed/.test(msg)) return "اللي عمل المجموعة أو الأدمن بس يقدر يعمل كده.";
+    if (/not_active_member/.test(msg)) return "الشخص ده مش ضمن الفريق دلوقتي.";
     if (/members_display_name_key|duplicate key/.test(msg)) return "الاسم ده مستخدم عند حد تاني في الفريق. اختار اسم تاني.";
     if (/not_member|row-level security/i.test(msg)) return "إنت مش ضمن الفريق دلوقتي.";
     if (/join_team|team_roster|could not find the function|relation .* does not exist|schema cache/i.test(msg)) return SETUP_NEW;
@@ -98,6 +105,12 @@
     history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>',
     bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
     chevron: '<path d="m6 9 6 6 6-6"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/>',
+    reply: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+    copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+    eyeOff: '<path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-2.6 3.4M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18"/>',
     hand: '<path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-5.9-2.4L3.4 16.8a2 2 0 0 1 2.9-2.8L8 16"/>',
   };
   const icon = (name, cls = "i") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -208,6 +221,14 @@
   let reads = [];
   let links = [];
   let myReminders = [];
+  let hiddenComments = new Set(); // رسايل النقاش اللي مسحتها من عندي
+  let chatGroups = [];             // شات الفريق والمجموعات اللي أقدر أشوفها
+  let chatMembers = [];
+  let chatMsgs = [];
+  let chatHidden = new Set();
+  let chatReads = [];
+  let chatReactions = [];
+  let chatError = "";
   let settings = { member_limit: 5 };
   const eventsCache = {};
   let online = []; // [{ uid, name, availability, viewing: [ids] }]
@@ -218,10 +239,12 @@
   const parseHash = (h) => {
     const m = /^#p(\d+)$/.exec(h || "");
     if (m) return { view: "issue", id: Number(m[1]) };
-    if (["#team", "#stats", "#settings"].includes(h)) return { view: h.slice(1) };
+    const c = /^#c(\d+)$/.exec(h || "");
+    if (c) return { view: "chat", gid: Number(c[1]) };
+    if (["#team", "#stats", "#settings", "#chat"].includes(h)) return { view: h.slice(1) };
     return { view: "new" };
   };
-  const hashOf = (r) => (r.view === "issue" ? "#p" + r.id : "#" + r.view);
+  const hashOf = (r) => (r.view === "issue" ? "#p" + r.id : r.view === "chat" && r.gid ? "#c" + r.gid : "#" + r.view);
   let route = parseHash(location.hash);
   const draft = { title: "", details: "", note: "", assignee: "", due: "", urgent: false, more: false, images: [] };
   const chatDrafts = {};
@@ -244,7 +267,6 @@
   const isLate = (i) => isOpen(i) && (ageHours(i) > LATE_HOURS || isOverdue(i));
   const isAuthor = (i) => !!me && (i.created_by === me.user_id || same(i.author, myName()));
   const isAssignee = (i) => same(i.assignee, myName());
-  const isMineComment = (c) => !!me && (c.created_by === me.user_id || same(c.author, myName()));
   const commentsFor = (id) => comments.filter((c) => c.problem_id === id);
   const imagesOf = (i) => (Array.isArray(i?.images) ? i.images.filter(Boolean) : []);
   const activeRoster = () => roster.filter((r) => r.active);
@@ -260,7 +282,8 @@
   }
   function unreadCount(pid) {
     const since = new Date(myLastRead(pid));
-    return comments.filter((c) => c.problem_id === pid && !isMineComment(c) && !c.pending && new Date(c.created_at) > since).length;
+    return comments.filter((c) => c.problem_id === pid && !isMine(c) && !c.pending && !c.deleted_at &&
+      !hiddenComments.has(c.id) && new Date(c.created_at) > since).length;
   }
 
   function memberNames() {
@@ -311,6 +334,31 @@
     getMe: () => must(db.from("members").select(ME_COLS).eq("user_id", me.user_id).single()),
     updateMe: (patch) => must(db.from("members").update(patch).eq("user_id", me.user_id).select(ME_COLS).single()),
     adminSetLimit: (n) => must(db.rpc("admin_set_limit", { p_limit: n })),
+    // نقاش المشكلة: تعديل ومسح
+    updateComment: (id, patch) => must(db.from("problem_comments").update(patch).eq("id", id)),
+    listCommentHides: () => must(db.from("comment_hides").select("comment_id")),
+    hideComment: (id) => must(db.rpc("comment_hide_for_me", { p_comment: id })),
+    deleteCommentForAll: (id) => must(db.rpc("comment_delete_for_everyone", { p_comment: id })),
+    // شات الفريق والمجموعات
+    listChatGroups: () => must(db.rpc("my_chat_groups")),
+    listChatMembers: () => must(db.from("chat_group_members").select("group_id,user_id,added_at")),
+    listChatMessages: async () =>
+      (await must(db.from("chat_messages").select("*").order("created_at", { ascending: false }).limit(3000))).reverse(),
+    addChatMessage: (row) => must(db.from("chat_messages").insert(row)),
+    updateChatMessage: (id, patch) => must(db.from("chat_messages").update(patch).eq("id", id)),
+    listChatHides: () => must(db.from("chat_message_hides").select("message_id")),
+    hideChatMessage: (id) => must(db.rpc("chat_hide_for_me", { p_message: id })),
+    deleteChatForAll: (id) => must(db.rpc("chat_delete_for_everyone", { p_message: id })),
+    listChatReads: () => must(db.from("chat_reads").select("group_id,user_id,member,last_read_at")),
+    markChatRead: (gid) => must(db.rpc("mark_chat_read", { p_group: gid })),
+    listChatReactions: () => must(db.from("chat_reactions").select("message_id,user_id,member,emoji")),
+    addChatReaction: (mid, emoji) => must(db.from("chat_reactions").insert({ message_id: mid, emoji })),
+    removeChatReaction: (mid, emoji) =>
+      must(db.from("chat_reactions").delete().eq("message_id", mid).eq("emoji", emoji).eq("user_id", me.user_id)),
+    createGroup: (name, members) => must(db.rpc("create_chat_group", { p_name: name || null, p_members: members })),
+    addGroupMember: (gid, u) => must(db.rpc("chat_group_add_member", { p_group: gid, p_user: u })),
+    removeGroupMember: (gid, u) => must(db.rpc("chat_group_remove_member", { p_group: gid, p_user: u })),
+    renameGroup: (gid, name) => must(db.rpc("chat_group_rename", { p_group: gid, p_name: name })),
     adminSetRemoved: (u, removed) => must(db.rpc("admin_set_removed", { p_user: u, p_removed: removed })),
 
     async uploadImage({ blob, ext }) {
@@ -526,8 +574,9 @@
         const map = new Map();
         Object.values(presenceCh.presenceState()).flat().forEach((p) => {
           if (!p?.uid || !p?.name) return;
-          const cur = map.get(p.uid) || { uid: p.uid, name: p.name, availability: p.availability || "available", viewing: [] };
+          const cur = map.get(p.uid) || { uid: p.uid, name: p.name, availability: p.availability || "available", viewing: [], typing: [] };
           if (p.viewing) cur.viewing.push(p.viewing);
+          if (p.typing) cur.typing.push(p.typing);
           map.set(p.uid, cur);
         });
         online = [...map.values()];
@@ -541,6 +590,7 @@
     Promise.resolve(presenceCh.track({
       uid: me.user_id, name: myName(), availability: me.availability,
       viewing: route.view === "issue" ? route.id : null,
+      typing: typingKey,
     })).catch(() => {});
   }
 
@@ -553,6 +603,7 @@
       (list.length > shown.length ? `<span class="stack-more">+${list.length - shown.length}</span>` : "");
     $("nav-team").dataset.count = list.length ? String(list.length) : "";
     renderViewers();
+    renderTyping();
     if (route.view === "team") renderView();
   }
 
@@ -597,14 +648,16 @@
     $("names").innerHTML = memberNames().map((n) => `<option value="${esc(n)}"></option>`).join("");
     document.querySelectorAll(".sb-nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.nav === route.view));
     $("me-btn").classList.toggle("active", route.view === "settings");
-    $("menu-dot").hidden = !issues.some((i) => unreadCount(i.id) > 0);
+    const chatUnreadAll = totalChatUnread();
+    $("nav-chat").dataset.unread = chatUnreadAll ? String(chatUnreadAll) : "";
+    $("menu-dot").hidden = !chatUnreadAll && !issues.some((i) => unreadCount(i.id) > 0);
   }
 
   function listItem(i) {
     const active = route.view === "issue" && route.id === i.id;
     const solved = i.status === "solved";
     const unread = unreadCount(i.id);
-    const nComments = commentsFor(i.id).length;
+    const nComments = visibleCount(ctxOf("p", i.id));
     const dot = solved ? " solved" : i.status === "in_progress" ? " working" : isUrgent(i) ? " urgent" : "";
     const meta = [
       isOverdue(i) ? `<span class="sb-late overdue" title="عدّى الميعاد النهائي">${icon("clock")}</span>`
@@ -684,6 +737,9 @@
       actions.innerHTML = `<button type="button" class="btn btn-ghost btn-sm" data-action="export">${icon("download")} نزّل Excel</button>`;
     } else if (route.view === "settings") {
       $("crumb").innerHTML = "<b>حسابي</b>";
+    } else if (route.view === "chat") {
+      const g = route.gid && groupById(route.gid);
+      $("crumb").innerHTML = g ? `<span>الشات</span><span class="sep">/</span><b>${esc(groupTitle(g))}</b>` : "<b>الشات</b>";
     } else {
       $("crumb").innerHTML = "<b>مشكلة جديدة</b>";
     }
@@ -730,8 +786,7 @@
               <div class="grid-2">
                 <div class="field">
                   <label for="assignee">المسؤول عنها</label>
-                  <input id="assignee" class="input" type="text" maxlength="60" list="names" autocomplete="off"
-                    placeholder="اكتب اسم المسؤول" value="${esc(draft.assignee)}" />
+                  ${assigneeSelect(draft.assignee, "input", 'id="assignee"')}
                 </div>
                 <div class="field">
                   <label for="due">لازم تتحل قبل</label>
@@ -858,6 +913,18 @@
     return `<div class="toolbar" role="toolbar" aria-label="أوامر المشكلة">${btns.join("")}</div>`;
   }
 
+  // المسؤول بيتختار من أعضاء الفريق بس (أي عضو جديد بيظهر هنا لوحده)
+  function assigneeSelect(current, cls, attrs) {
+    const people = activeRoster().map((r) => r.display_name)
+      .sort((a, b) => (same(b, myName()) - same(a, myName())) || a.localeCompare(b, "ar"));
+    const legacy = current && !people.some((n) => same(n, current));
+    return `<select class="${cls}" ${attrs}>
+      <option value="" ${current ? "" : "selected"}>مفيش مسؤول</option>
+      ${legacy ? `<option value="${esc(current)}" selected disabled>${esc(current)} (مش في الفريق)</option>` : ""}
+      ${people.map((n) => `<option value="${esc(n)}" ${same(n, current) ? "selected" : ""}>${esc(same(n, myName()) ? `أنا (${n})` : n)}</option>`).join("")}
+    </select>`;
+  }
+
   function detailHtml(i) {
     const solved = i.status === "solved";
     const person = (n) => (n ? `${avatar(n, "sm")}<span>${esc(n)}</span>` : `<span class="sub">مش متسجل</span>`);
@@ -867,8 +934,7 @@
 
     const props = [
       ["الحالة", statusBadge(i)],
-      ["المسؤول", `<input class="prop-input" data-field="assignee" type="text" maxlength="60" list="names" autocomplete="off"
-          aria-label="المسؤول عن المشكلة" placeholder="اكتب اسم المسؤول" value="${esc(i.assignee || "")}" />${asgAway}`],
+      ["المسؤول", `${assigneeSelect(i.assignee, "prop-select", 'data-field="assignee" aria-label="المسؤول عن المشكلة"')}${asgAway}`],
       ["الأهمية", `<select class="prop-select${isUrgent(i) ? " is-urgent" : ""}" data-field="priority" aria-label="أهمية المشكلة">
           <option value="normal" ${isUrgent(i) ? "" : "selected"}>عادية</option>
           <option value="urgent" ${isUrgent(i) ? "selected" : ""}>عاجلة</option>
@@ -939,7 +1005,7 @@
       `<span class="ref">#${i.id}</span>`,
     ].join("");
 
-    const nComments = commentsFor(i.id).length;
+    const nComments = visibleCount(ctxOf("p", i.id));
     return `
       <article class="detail">
         <header class="detail-head">
@@ -965,7 +1031,7 @@
                 ${detailTab === "chat" && nComments >= 2 ? `<button type="button" class="btn btn-ghost btn-sm ai-btn" data-action="summarize">${icon("sparkle")} لخّص النقاش</button>` : ""}
               </div>
               <div id="ai-card" class="ai-card" hidden></div>
-              <div id="dtab-panel">${detailTab === "chat" ? chatHtml(i) : historyHtml(i)}</div>
+              <div id="dtab-panel">${detailTab === "chat" ? chatBoxHtml(ctxOf("p", i.id)) : historyHtml(i)}</div>
             </section>
             ${solved && i.solution ? section("إزاي اتحلت", i.solution, "solution") : ""}
             ${action}
@@ -984,26 +1050,112 @@
       <button type="button" class="btn btn-primary" data-action="new">${icon("plus")} مشكلة جديدة</button>
     </div>`;
 
-  // ---------- النقاش ----------
+  // ---------- الرسايل: نقاش المشكلة، وشات الفريق والمجموعات ----------
+  // كل محادثة ليها "سياق": نقاش مشكلة { kind: "p" } أو محادثة من الشات { kind: "c" }
+  const ctxOf = (kind, id) => ({ kind, id, key: kind + id });
+  function currentCtx() {
+    if (route.view === "issue" && findIssue(route.id)) return ctxOf("p", route.id);
+    if (route.view === "chat" && route.gid && groupById(route.gid)) return ctxOf("c", route.gid);
+    return null;
+  }
+  const groupById = (id) => chatGroups.find((g) => g.id === id);
+  const teamGroup = () => chatGroups.find((g) => g.is_team);
+  const rosterById = (u) => roster.find((r) => r.user_id === u);
+  const nameOf = (u, fallback) => rosterById(u)?.display_name || fallback || "حد من الفريق";
+  const memberRows = (gid) => chatMembers.filter((m) => m.group_id === gid);
+  // مين في المحادثة دلوقتي (الأعضاء النشطين بس)
+  function groupMemberIds(gid) {
+    const g = groupById(gid);
+    if (!g) return [];
+    if (g.is_team) return activeRoster().map((r) => r.user_id);
+    return memberRows(gid).map((m) => m.user_id).filter((u) => rosterById(u)?.active);
+  }
+  // عضو حقيقي في المحادثة (مش الأدمن اللي بيتابع من بعيد)
+  const isParticipant = (gid) => {
+    const g = groupById(gid);
+    return !!g && !!me && (g.is_team || memberRows(gid).some((m) => m.user_id === me.user_id));
+  };
+  const canWrite = (ctx) => ctx.kind === "p" || isParticipant(ctx.id);
+  function groupTitle(g) {
+    if (!g) return "";
+    if (g.is_team) return "شات الفريق";
+    if (g.name) return g.name;
+    const ids = memberRows(g.id).map((m) => m.user_id);
+    const others = ids.filter((u) => u !== me?.user_id);
+    return (others.length ? others : ids).map((u) => nameOf(u)).join("، ") || "شات خاص";
+  }
+  const isMine = (m) => !!me && (m.created_by === me.user_id || (!m.created_by && same(m.author, myName())));
+  const ATT_LABEL = { image: "📷 صورة", audio: "🎤 رسالة صوتية", file: "📎 ملف" };
+  const attLabel = (m) => ATT_LABEL[(m.attachments || [])[0]?.kind] || "";
+  const snippet = (m, n = 90) => (m.deleted_at ? "اتمسحت الرسالة دي" : (m.body || attLabel(m) || "").replace(/\s+/g, " ").slice(0, n));
+
+  function msgsOf(ctx) {
+    if (ctx.kind === "p") return comments.filter((c) => c.problem_id === ctx.id && !hiddenComments.has(c.id));
+    return chatMsgs.filter((m) => m.group_id === ctx.id && !chatHidden.has(m.id));
+  }
+  const findMsg = (ctx, id) => (ctx.kind === "p" ? comments : chatMsgs).find((m) => String(m.id) === String(id));
+  const visibleCount = (ctx) => msgsOf(ctx).filter((m) => !m.deleted_at && !m.pending).length;
+
+  // ---------- علامات الصح: ✓ اتبعتت، ✓✓ حد شافها، ✓✓✓ الكل شافها ----------
+  function audienceIds(ctx, senderId) {
+    const ids = ctx.kind === "p" ? activeRoster().map((r) => r.user_id) : groupMemberIds(ctx.id);
+    return ids.filter((u) => u !== senderId);
+  }
+  const readRows = (ctx) =>
+    ctx.kind === "p" ? reads.filter((r) => r.problem_id === ctx.id) : chatReads.filter((r) => r.group_id === ctx.id);
+  function seenBy(ctx, m) {
+    const aud = audienceIds(ctx, m.created_by || me?.user_id);
+    const t = new Date(m.created_at);
+    const rows = readRows(ctx).filter((r) => aud.includes(r.user_id) && new Date(r.last_read_at) >= t);
+    const seenIds = new Set(rows.map((r) => r.user_id));
+    return {
+      total: aud.length,
+      seen: rows.map((r) => nameOf(r.user_id, r.member)),
+      waiting: aud.filter((u) => !seenIds.has(u)).map((u) => nameOf(u)),
+    };
+  }
+  const TICKS = (n) =>
+    `<svg class="tick-i" viewBox="0 0 ${8 + n * 5} 12" aria-hidden="true">${Array.from({ length: n }, (_, k) =>
+      `<path d="M${1 + k * 5} 6.5l2.6 2.6L${8.6 + k * 5} 3"/>`).join("")}</svg>`;
+  function ticksHtml(ctx, m) {
+    if (m.pending) return `<span class="ticks pending" title="بيتبعت…">${icon("clock")}</span>`;
+    const s = seenBy(ctx, m);
+    const level = !s.seen.length ? 1 : s.seen.length >= s.total ? 3 : 2;
+    const label = level === 1 ? "اتبعتت، ولسه محدش شافها" : level === 3 ? "الكل شافها" : `شافها ${s.seen.join("، ")}`;
+    return `<button type="button" class="ticks t${level}" data-action="ticks" data-mid="${m.id}" title="${esc(label)}" aria-label="${esc(label)}">${TICKS(level)}</button>`;
+  }
+  function seenLineHtml(ctx, m) {
+    const s = seenBy(ctx, m);
+    if (!s.total || !s.seen.length) return "";
+    const text = s.seen.length >= s.total && s.total > 1 ? "الكل شافها" : `شافها ${s.seen.join("، ")}`;
+    return `<p class="seen">${esc(text)}</p>`;
+  }
+
+  // ---------- المنشن ----------
+  const ALL_TAGS = ["@الكل", "@all"];
   function highlightMentions(html) {
-    const names = activeRoster().map((r) => r.display_name).sort((a, b) => b.length - a.length);
+    const names = [...activeRoster().map((r) => r.display_name), "الكل", "all"].sort((a, b) => b.length - a.length);
     let out = html;
     for (const n of names) {
       const tok = "@" + esc(n);
       if (!out.includes(tok)) continue;
-      const cls = same(n, myName()) ? "mention me" : "mention";
+      const cls = same(n, myName()) || n === "الكل" || n === "all" ? "mention to-me" : "mention";
       out = out.split(tok).join(`<span class="${cls}">${tok}</span>`);
     }
     return out;
   }
+  const mentionsMeIn = (body) => {
+    const t = (body || "").toLowerCase();
+    return ALL_TAGS.some((x) => t.includes(x)) || (!!myName() && t.includes("@" + myName().toLowerCase()));
+  };
 
-  function attachmentsHtml(c) {
-    const atts = Array.isArray(c.attachments) ? c.attachments : [];
+  function attachmentsHtml(m) {
+    const atts = Array.isArray(m.attachments) ? m.attachments : [];
     if (!atts.length) return "";
     const imgs = atts.filter((a) => a.kind === "image");
     return `<div class="atts">
       ${imgs.length ? `<div class="att-imgs">${imgs.map((a, n) => `
-        <button type="button" class="att-img" data-action="chat-image" data-cid="${c.id}" data-index="${n}" aria-label="افتح الصورة">
+        <button type="button" class="att-img" data-action="chat-image" data-mid="${m.id}" data-index="${n}" aria-label="افتح الصورة">
           <img src="${esc(attUrl(a))}" alt="" loading="lazy" /></button>`).join("")}</div>` : ""}
       ${atts.filter((a) => a.kind === "audio").map((a) => `
         <div class="att-audio">${icon("mic")}<audio controls preload="none" src="${esc(attUrl(a))}"></audio>${a.duration ? `<span class="att-dur">${clock(a.duration)}</span>` : ""}</div>`).join("")}
@@ -1013,97 +1165,155 @@
     </div>`;
   }
 
-  function reactionsHtml(c) {
-    if (c.pending) return "";
-    const rs = reactions.filter((r) => r.comment_id === c.id);
-    const groups = EMOJIS.map((e) => {
-      const list = rs.filter((r) => r.emoji === e);
+  function quoteHtml(ctx, rid) {
+    const q = findMsg(ctx, rid);
+    if (!q) return `<span class="quote gone">${icon("reply")}<span>الرسالة الأصلية مش موجودة</span></span>`;
+    return `<button type="button" class="quote" data-action="jump" data-mid="${q.id}">
+      <b>${esc(isMine(q) ? "إنت" : q.author)}</b><span>${esc(snippet(q, 120))}</span></button>`;
+  }
+
+  const reactsOf = (ctx, m) =>
+    ctx.kind === "p" ? reactions.filter((r) => r.comment_id === m.id) : chatReactions.filter((r) => r.message_id === m.id);
+
+  // تحت كل رسالة: الردود السريعة، وزرار الرد السريع، وزرار الأوامر (⋯)
+  function toolsHtml(ctx, m) {
+    if (m.pending) return "";
+    const write = canWrite(ctx) && !m.deleted_at;
+    const groups = m.deleted_at ? [] : EMOJIS.map((e) => {
+      const list = reactsOf(ctx, m).filter((r) => r.emoji === e);
       return { e, list, mine: list.some((r) => r.user_id === me?.user_id) };
     }).filter((g) => g.list.length);
     return `<div class="reacts">
-      ${groups.map((g) => `<button type="button" class="react${g.mine ? " mine" : ""}" data-action="react" data-cid="${c.id}" data-emoji="${g.e}"
-          title="${esc(g.list.map((r) => r.member).join("، "))}">${g.e} <span>${g.list.length}</span></button>`).join("")}
+      ${groups.map((g) => `<button type="button" class="react${g.mine ? " mine" : ""}" data-action="react" data-mid="${m.id}" data-emoji="${g.e}"
+          title="${esc(g.list.map((r) => nameOf(r.user_id, r.member)).join("، "))}" ${write ? "" : "disabled"}>${g.e} <span>${g.list.length}</span></button>`).join("")}
       <span class="react-add-wrap">
-        <button type="button" class="react-add" data-action="react-open" data-cid="${c.id}" aria-label="رد سريع">${icon("smile")}</button>
+        ${write ? `<button type="button" class="react-add" data-action="react-open" data-mid="${m.id}" aria-label="رد سريع">${icon("smile")}</button>` : ""}
+        <button type="button" class="react-add msg-more" data-action="msg-menu" data-mid="${m.id}" aria-label="أوامر الرسالة">${icon("more")}</button>
       </span>
     </div>`;
   }
 
-  function chatMessagesHtml(id) {
-    const list = commentsFor(id);
-    if (!list.length) return `<p class="chat-empty">لسه محدش كتب حاجة. ابدأ النقاش مع الفريق هنا، واكتب @ عشان تذكر حد.</p>`;
+  function messagesHtml(ctx) {
+    const list = msgsOf(ctx);
+    if (!list.length) {
+      return `<p class="chat-empty">${ctx.kind === "p"
+        ? "لسه محدش كتب حاجة. ابدأ النقاش مع الفريق هنا، واكتب @ عشان تذكر حد."
+        : "لسه مفيش رسايل هنا. ابدأ الكلام، واكتب @ عشان تذكر حد، أو @الكل عشان توصل للكل."}</p>`;
+    }
     let html = "";
     let prev = null;
     let lastDay = null;
-    const lastMine = [...list].reverse().find(isMineComment);
-    for (const c of list) {
-      const day = dayLabel(c.created_at);
+    const lastMine = [...list].reverse().find((m) => isMine(m) && !m.deleted_at && !m.pending);
+    for (const m of list) {
+      const day = dayLabel(m.created_at);
       if (day !== lastDay) {
         html += `<div class="chat-day"><span>${esc(day)}</span></div>`;
         lastDay = day;
         prev = null;
       }
-      const mine = isMineComment(c);
-      const grouped = prev && same(prev.author, c.author) && new Date(c.created_at) - new Date(prev.created_at) < 5 * 60e3;
-      const mentionsMe = !mine && (c.body || "").toLowerCase().includes("@" + myName().toLowerCase());
+      const mine = isMine(m);
+      const deleted = !!m.deleted_at;
+      const grouped = prev && !prev.deleted_at && same(prev.author, m.author) &&
+        new Date(m.created_at) - new Date(prev.created_at) < 5 * 60e3;
+      const mentionsMe = !mine && !deleted && mentionsMeIn(m.body);
       html += `
-        <div class="msg${mine ? " mine" : ""}${grouped ? " grouped" : ""}${c.pending ? " pending" : ""}${mentionsMe ? " mentions-me" : ""}" data-cid="${c.id}">
-          ${mine ? "" : grouped ? '<span class="msg-av"></span>' : `<span class="msg-av">${avatar(c.author, "sm")}</span>`}
+        <div class="msg${mine ? " mine" : ""}${grouped ? " grouped" : ""}${m.pending ? " pending" : ""}${mentionsMe ? " mentions-me" : ""}${deleted ? " deleted" : ""}" data-mid="${m.id}">
+          ${mine ? "" : grouped ? '<span class="msg-av"></span>' : `<span class="msg-av">${avatar(m.author, "sm")}</span>`}
           <div class="bubble-wrap">
             <div class="bubble">
-              ${!mine && !grouped ? `<span class="msg-name">${esc(c.author)}</span>` : ""}
-              ${attachmentsHtml(c)}
-              ${c.body ? `<p>${highlightMentions(esc(c.body))}</p>` : ""}
-              <time datetime="${esc(c.created_at)}">${c.pending ? "بيتبعت…" : esc(timeOnly(c.created_at))}</time>
+              ${!mine && !grouped ? `<span class="msg-name">${esc(m.author)}</span>` : ""}
+              ${deleted
+                ? `<p class="deleted-text">${icon("x")} اتمسحت الرسالة دي</p>`
+                : `${m.reply_to ? quoteHtml(ctx, m.reply_to) : ""}${attachmentsHtml(m)}${m.body ? `<p>${highlightMentions(esc(m.body))}</p>` : ""}`}
+              <span class="msg-meta">
+                ${m.pinned_at && !deleted ? `<span class="pin-mark" title="مثبتة">${icon("pin")}</span>` : ""}
+                ${m.edited_at && !deleted ? `<span class="edited-mark">اتعدلت</span>` : ""}
+                <time datetime="${esc(m.created_at)}">${m.pending ? "بيتبعت…" : esc(timeOnly(m.created_at))}</time>
+                ${mine && !deleted ? ticksHtml(ctx, m) : ""}
+              </span>
             </div>
-            ${reactionsHtml(c)}
-            ${c === lastMine && !c.pending ? seenHtml(c) : ""}
+            ${toolsHtml(ctx, m)}
+            ${m === lastMine ? seenLineHtml(ctx, m) : ""}
           </div>
         </div>`;
-      prev = c;
+      prev = m;
     }
     return html;
   }
 
-  function seenHtml(c) {
-    const who = reads
-      .filter((r) => r.problem_id === c.problem_id && r.user_id !== me?.user_id && new Date(r.last_read_at) >= new Date(c.created_at))
-      .map((r) => r.member)
-      .filter(Boolean);
-    return who.length
-      ? `<p class="seen seen-yes">✓✓ شافها ${esc(who.join("، "))}</p>`
-      : `<p class="seen">✓ اتبعتت</p>`;
-  }
-
-  function pendingChipsHtml(pid) {
-    return (chatFiles[pid] || []).map((f) => `
+  function pendingChipsHtml(key) {
+    return (chatFiles[key] || []).map((f) => `
       <span class="pchip">${f.kind === "image" ? `<img src="${f.url}" alt="" />` : icon(f.kind === "audio" ? "mic" : "file")}
         <span class="pchip-name">${esc(f.name)}</span>
         <button type="button" class="pchip-x" data-action="remove-pending" data-key="${f.key}" aria-label="شيل ${esc(f.name)}">${icon("x")}</button>
       </span>`).join("");
   }
 
-  function chatHtml(i) {
-    const hasText = !!(chatDrafts[i.id] || "").trim() || (chatFiles[i.id] || []).length;
+  // الرد على رسالة أو تعديلها: شريط صغير فوق خانة الكتابة
+  const composeMode = {};
+  function composeModeHtml(ctx) {
+    const mode = composeMode[ctx.key];
+    if (!mode) return "";
+    const m = findMsg(ctx, mode.mid);
+    const text = mode.kind === "edit"
+      ? `${icon("edit")}<span><b>بتعدّل رسالتك</b></span>`
+      : `${icon("reply")}<span>رد على <b>${esc(m ? (isMine(m) ? "نفسك" : m.author) : "")}</b>: ${esc(m ? snippet(m, 70) : "")}</span>`;
+    return `${text}<button type="button" class="icon-btn" data-action="compose-cancel" aria-label="إلغاء">${icon("x")}</button>`;
+  }
+
+  // مين بيكتب دلوقتي (زي واتساب)
+  function typersFor(key) {
+    return online.filter((o) => o.uid !== me?.user_id && o.typing.includes(key)).map((o) => o.name);
+  }
+  function typingText(ctx) {
+    const t = typersFor(ctx.key);
+    if (!t.length) return "";
+    if (t.length === 1) return `${t[0]} بيكتب…`;
+    if (t.length === 2) return `${t[0]} و${t[1]} بيكتبوا…`;
+    return `${plural(t.length, WORDS.member)} بيكتبوا…`;
+  }
+  function renderTyping() {
+    const el = $("typing");
+    const ctx = currentCtx();
+    if (!el || !ctx) return;
+    const text = typingText(ctx);
+    el.hidden = !text;
+    el.textContent = text;
+  }
+
+  function composerHtml(ctx) {
+    if (!canWrite(ctx)) {
+      return `<div class="watch-note">${icon("eye")}<span>إنت بتتابع المحادثة دي بس. محدش فيها شايف إنك فاتحها، ومش هيوصلك منها إشعارات.</span></div>`;
+    }
+    const files = chatFiles[ctx.key] || [];
+    const hasText = !!(chatDrafts[ctx.key] || "").trim() || files.length;
     return `
-      <div class="chat-box">
-        <div class="chat-list" id="chat-list" data-pid="${i.id}" aria-live="polite">${chatMessagesHtml(i.id)}</div>
-        <div class="chat-compose">
-          <div id="mention-pop" class="mention-pop" role="listbox" hidden></div>
-          <div id="chat-pending" class="chat-pending" ${(chatFiles[i.id] || []).length ? "" : "hidden"}>${pendingChipsHtml(i.id)}</div>
-          <div id="rec-bar" class="rec-bar" hidden>
-            <span class="rec-dot" aria-hidden="true"></span><span id="rec-time">0:00</span><span class="rec-label">بيسجّل…</span>
-            <span class="rec-spacer"></span>
-            <button type="button" class="btn btn-ghost btn-sm" data-action="rec-cancel">إلغاء</button>
-            <button type="button" class="btn btn-primary btn-sm" data-action="rec-send">${icon("send")} ابعت</button>
-          </div>
-          <form id="chat-form" class="chat-form" novalidate>
-            <button type="button" class="icon-btn chat-tool" data-action="chat-attach" aria-label="ابعت صورة أو ملف">${icon("clip")}</button>
-            <textarea id="chat-input" class="input" rows="1" maxlength="2000" placeholder="اكتب رسالة… واكتب @ عشان تذكر حد" aria-label="اكتب رسالة">${esc(chatDrafts[i.id] || "")}</textarea>
-            <button type="button" id="mic-btn" class="btn btn-secondary chat-send" data-action="record" aria-label="سجّل رسالة صوتية" ${hasText ? "hidden" : ""}>${icon("mic")}</button>
-            <button type="submit" id="send-btn" class="btn btn-primary chat-send" aria-label="ابعت" ${hasText ? "" : "hidden"}>${icon("send")}</button>
-          </form>
+      <div class="chat-compose">
+        <div id="mention-pop" class="mention-pop" role="listbox" hidden></div>
+        <div id="compose-mode" class="compose-mode" ${composeMode[ctx.key] ? "" : "hidden"}>${composeModeHtml(ctx)}</div>
+        <div id="chat-pending" class="chat-pending" ${files.length ? "" : "hidden"}>${pendingChipsHtml(ctx.key)}</div>
+        <div id="rec-bar" class="rec-bar" hidden>
+          <span class="rec-dot" aria-hidden="true"></span><span id="rec-time">0:00</span><span class="rec-label">بيسجّل…</span>
+          <span class="rec-spacer"></span>
+          <button type="button" class="btn btn-ghost btn-sm" data-action="rec-cancel">إلغاء</button>
+          <button type="button" class="btn btn-primary btn-sm" data-action="rec-send">${icon("send")} ابعت</button>
         </div>
+        <form id="chat-form" class="chat-form" novalidate>
+          <button type="button" class="icon-btn chat-tool" data-action="chat-attach" aria-label="ابعت صورة أو ملف">${icon("clip")}</button>
+          <textarea id="chat-input" class="input" rows="1" maxlength="2000" placeholder="اكتب رسالة… واكتب @ عشان تذكر حد" aria-label="اكتب رسالة">${esc(chatDrafts[ctx.key] || "")}</textarea>
+          <button type="button" id="mic-btn" class="btn btn-secondary chat-send" data-action="record" aria-label="سجّل رسالة صوتية" ${hasText ? "hidden" : ""}>${icon("mic")}</button>
+          <button type="submit" id="send-btn" class="btn btn-primary chat-send" aria-label="ابعت" ${hasText ? "" : "hidden"}>${icon("send")}</button>
+        </form>
+      </div>`;
+  }
+
+  function chatBoxHtml(ctx) {
+    const typing = typingText(ctx);
+    return `
+      <div class="chat-box${ctx.kind === "c" ? " full" : ""}">
+        <div class="chat-list" id="chat-list" data-key="${ctx.key}" aria-live="polite">${messagesHtml(ctx)}</div>
+        <p id="typing" class="typing" ${typing ? "" : "hidden"}>${esc(typing)}</p>
+        ${composerHtml(ctx)}
       </div>`;
   }
 
@@ -1112,31 +1322,38 @@
   let chatPending = false;
   function renderChat(forceBottom = false) {
     const list = $("chat-list");
-    if (!list || route.view !== "issue") return;
+    const ctx = currentCtx();
+    if (!list || !ctx || list.dataset.key !== ctx.key) return;
     if (playing()) { chatPending = true; return; }
     chatPending = false;
-    const openPick = list.querySelector(".react-pick")?.dataset.cid;
+    const openPick = list.querySelector(".react-pick")?.dataset.mid;
     const stick = forceBottom || nearBottom(list);
-    list.innerHTML = chatMessagesHtml(route.id);
-    if (openPick) toggleReactPicker(Number(openPick), true);
-    const n = commentsFor(route.id).length;
-    if ($("chat-count")) $("chat-count").textContent = n || "";
+    list.innerHTML = messagesHtml(ctx);
+    if (openPick) toggleReactPicker(openPick, true);
+    if ($("chat-count")) $("chat-count").textContent = visibleCount(ctx) || "";
+    if ($("compose-mode")) {
+      $("compose-mode").hidden = !composeMode[ctx.key];
+      $("compose-mode").innerHTML = composeModeHtml(ctx);
+    }
+    if (ctx.kind === "c") renderConvChrome();
     if (stick) list.scrollTop = list.scrollHeight;
   }
 
   function updateSendMode() {
     const input = $("chat-input");
-    if (!input) return;
-    const has = !!input.value.trim() || (chatFiles[route.id] || []).length > 0;
+    const ctx = currentCtx();
+    if (!input || !ctx) return;
+    const has = !!input.value.trim() || (chatFiles[ctx.key] || []).length > 0 || composeMode[ctx.key]?.kind === "edit";
     $("send-btn").hidden = !has;
     $("mic-btn").hidden = has;
   }
 
   function renderChatPending() {
     const el = $("chat-pending");
-    if (!el) return;
-    el.innerHTML = pendingChipsHtml(route.id);
-    el.hidden = !(chatFiles[route.id] || []).length;
+    const ctx = currentCtx();
+    if (!el || !ctx) return;
+    el.innerHTML = pendingChipsHtml(ctx.key);
+    el.hidden = !(chatFiles[ctx.key] || []).length;
     updateSendMode();
   }
 
@@ -1145,25 +1362,179 @@
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }
 
-  // مين قرا: بنسجّل إني شفت الرسايل لما النقاش مفتوح قدامي
+  // مين قرا: بنسجّل إني شفت الرسايل لما المحادثة مفتوحة قدامي
   let readTimer;
   function maybeMarkRead() {
-    if (route.view !== "issue" || detailTab !== "chat" || document.visibilityState !== "visible") return;
-    const pid = route.id;
-    if (!findIssue(pid)) return;
-    const last = commentsFor(pid).filter((c) => !c.pending).pop();
-    const mineRead = reads.find((r) => r.problem_id === pid && r.user_id === me.user_id);
+    const ctx = currentCtx();
+    if (!ctx || !me || document.visibilityState !== "visible") return;
+    if (ctx.kind === "p" && detailTab !== "chat") return;
+    if (!canWrite(ctx)) return; // الأدمن بيتابع من غير ما يبان إنه شاف
+    const last = msgsOf(ctx).filter((m) => !m.pending).pop();
+    const rows = ctx.kind === "p" ? reads : chatReads;
+    const match = (r) => (ctx.kind === "p" ? r.problem_id === ctx.id : r.group_id === ctx.id) && r.user_id === me.user_id;
+    const mineRead = rows.find(match);
     if (!last || (mineRead && new Date(mineRead.last_read_at) >= new Date(last.created_at))) return;
     clearTimeout(readTimer);
     readTimer = setTimeout(async () => {
       const now = new Date().toISOString();
-      const row = reads.find((r) => r.problem_id === pid && r.user_id === me.user_id);
+      const row = rows.find(match);
       if (row) row.last_read_at = now;
-      else reads.push({ problem_id: pid, user_id: me.user_id, member: myName(), last_read_at: now });
+      else rows.push({ [ctx.kind === "p" ? "problem_id" : "group_id"]: ctx.id, user_id: me.user_id, member: myName(), last_read_at: now });
       renderList();
       renderTabs();
-      try { await store.markRead(pid); } catch (e) { console.warn(e); }
+      if (ctx.kind === "c") renderConvList();
+      try {
+        await (ctx.kind === "p" ? store.markRead(ctx.id) : store.markChatRead(ctx.id));
+      } catch (e) { console.warn(e); }
     }, 700);
+  }
+
+  // ---------- صفحة الشات ----------
+  let chatQuery = "";
+  const pinIndex = {};
+  function chatLastRead(gid) {
+    return chatReads.find((r) => r.group_id === gid && r.user_id === me?.user_id)?.last_read_at || null;
+  }
+  function chatUnread(gid) {
+    if (!isParticipant(gid)) return 0;
+    const g = groupById(gid);
+    const since = new Date(chatLastRead(gid) ||
+      (g.is_team ? me.joined_at : memberRows(gid).find((m) => m.user_id === me.user_id)?.added_at) || 0);
+    return chatMsgs.filter((m) => m.group_id === gid && !m.pending && !m.deleted_at && !chatHidden.has(m.id) &&
+      !isMine(m) && new Date(m.created_at) > since).length;
+  }
+  const totalChatUnread = () => chatGroups.reduce((s, g) => s + chatUnread(g.id), 0);
+  function lastMsgOf(gid) {
+    for (let k = chatMsgs.length - 1; k >= 0; k--) {
+      const m = chatMsgs[k];
+      if (m.group_id === gid && !chatHidden.has(m.id)) return m;
+    }
+    return null;
+  }
+  function shortWhen(iso) {
+    const d = daysAgo(iso);
+    if (d <= 0) return timeOnly(iso);
+    if (d === 1) return "امبارح";
+    return new Date(iso).toLocaleDateString(LOCALE, { day: "numeric", month: "numeric" });
+  }
+  function convAvatar(g) {
+    if (g.is_team) return `<span class="conv-icon team">${icon("users")}</span>`;
+    const ids = memberRows(g.id).map((m) => m.user_id);
+    if (!g.name && ids.length === 2) {
+      const other = ids.find((u) => u !== me?.user_id) || ids[0];
+      return avatar(nameOf(other));
+    }
+    let h = 0;
+    for (const c of groupTitle(g)) h = (h * 31 + c.codePointAt(0)) >>> 0;
+    return `<span class="conv-icon" style="--h:${HUES[h % HUES.length]}">${icon("chat")}</span>`;
+  }
+  function convRowHtml(g) {
+    const last = lastMsgOf(g.id);
+    const unread = chatUnread(g.id);
+    const watch = !isParticipant(g.id);
+    const active = route.view === "chat" && route.gid === g.id;
+    const preview = last
+      ? last.deleted_at ? "اتمسحت رسالة" : `${isMine(last) ? "إنت" : last.author}: ${snippet(last, 60)}`
+      : g.is_team ? "كل الفريق هنا" : "لسه مفيش رسايل";
+    return `
+      <button type="button" class="conv-row${active ? " active" : ""}${unread ? " unread" : ""}${watch ? " watch" : ""}" data-action="open-conv" data-gid="${g.id}">
+        <span class="conv-av">${convAvatar(g)}</span>
+        <span class="conv-main">
+          <span class="conv-top"><b class="conv-name">${esc(groupTitle(g))}</b>${last ? `<time>${esc(shortWhen(last.created_at))}</time>` : ""}</span>
+          <span class="conv-bottom"><span class="conv-last">${esc(preview)}</span>${unread ? `<span class="sb-unread">${unread}</span>` : ""}</span>
+        </span>
+      </button>`;
+  }
+  function convListHtml() {
+    if (!chatGroups.length) return `<p class="sb-empty">${chatError || "بيحمّل…"}</p>`;
+    const byRecent = (a, b) => (b.is_team - a.is_team) ||
+      (new Date(lastMsgOf(b.id)?.created_at || b.created_at) - new Date(lastMsgOf(a.id)?.created_at || a.created_at));
+    const mine = chatGroups.filter((g) => isParticipant(g.id)).sort(byRecent);
+    const watched = chatGroups.filter((g) => !isParticipant(g.id)).sort(byRecent);
+    return mine.map(convRowHtml).join("") + (watched.length ? `
+      <details class="watch-group" ${watched.some((g) => route.gid === g.id) ? "open" : ""}>
+        <summary>${icon("eye")} محادثات الفريق الخاصة · ${watched.length}<span class="sub">بتظهرلك إنت بس كأدمن، ومحدش يعرف إنك بتشوفها</span></summary>
+        ${watched.map(convRowHtml).join("")}
+      </details>` : "");
+  }
+  function markQuery(text, q) {
+    const safe = esc(text);
+    if (!q) return safe;
+    const i = text.toLowerCase().indexOf(q);
+    if (i < 0) return safe;
+    return esc(text.slice(0, i)) + `<mark>${esc(text.slice(i, i + q.length))}</mark>` + esc(text.slice(i + q.length));
+  }
+  function searchResultsHtml() {
+    const q = chatQuery.trim().toLowerCase();
+    const hits = chatMsgs.filter((m) => !m.deleted_at && !m.pending && !chatHidden.has(m.id) && groupById(m.group_id) &&
+      [m.body, m.author, ...(m.attachments || []).map((a) => a.name)].some((f) => (f || "").toLowerCase().includes(q)))
+      .slice(-60).reverse();
+    if (!hits.length) return `<p class="sb-empty">مفيش رسايل فيها "${esc(chatQuery.trim())}".</p>`;
+    return hits.map((m) => `
+      <button type="button" class="search-hit" data-action="open-hit" data-gid="${m.group_id}" data-mid="${m.id}">
+        <span class="hit-top"><b>${esc(groupTitle(groupById(m.group_id)))}</b><time>${esc(shortWhen(m.created_at))}</time></span>
+        <span class="hit-text"><b>${esc(m.author)}:</b> ${markQuery(m.body || attLabel(m), q)}</span>
+      </button>`).join("");
+  }
+  function renderConvList() {
+    const el = $("conv-list");
+    if (el) el.innerHTML = chatQuery.trim() ? searchResultsHtml() : convListHtml();
+  }
+  function pinnedOf(gid) {
+    return msgsOf(ctxOf("c", gid)).filter((m) => m.pinned_at && !m.deleted_at)
+      .sort((a, b) => new Date(b.pinned_at) - new Date(a.pinned_at));
+  }
+  function pinBarHtml(gid) {
+    const pins = pinnedOf(gid);
+    if (!pins.length) return "";
+    const k = (pinIndex[gid] || 0) % pins.length;
+    return `<button type="button" class="pin-bar" data-action="jump-pin" data-gid="${gid}">
+      ${icon("pin")}<span><b>مثبتة${pins.length > 1 ? ` · ${k + 1} من ${pins.length}` : ""}</b> ${esc(snippet(pins[k], 110))}</span></button>`;
+  }
+  function convSub(g) {
+    if (g.is_team) return `${plural(activeRoster().length, WORDS.member)} · كل الفريق`;
+    const ids = memberRows(g.id).map((m) => m.user_id);
+    return ids.map((u) => (u === me?.user_id ? "إنت" : nameOf(u))).join("، ");
+  }
+  function convHtml(g) {
+    return `
+      <header class="conv-head">
+        <button type="button" class="icon-btn conv-back" data-action="conv-back" aria-label="ارجع للمحادثات">
+          <svg class="i" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg></button>
+        <span class="conv-av">${convAvatar(g)}</span>
+        <div class="conv-title"><h2 id="conv-head-name">${esc(groupTitle(g))}</h2><span class="sub" id="conv-head-sub">${esc(convSub(g))}</span></div>
+        ${g.is_team ? "" : `<button type="button" class="btn btn-ghost btn-sm" data-action="conv-info">${icon("users")} الأعضاء</button>`}
+      </header>
+      <div id="pin-wrap">${pinBarHtml(g.id)}</div>
+      ${chatBoxHtml(ctxOf("c", g.id))}`;
+  }
+  // الأجزاء اللي بتتغير في المحادثة المفتوحة من غير ما نعيد رسم خانة الكتابة
+  function renderConvChrome() {
+    const g = groupById(route.gid);
+    if (!g) return;
+    if ($("pin-wrap")) $("pin-wrap").innerHTML = pinBarHtml(g.id);
+    if ($("conv-head-name")) $("conv-head-name").textContent = groupTitle(g);
+    if ($("conv-head-sub")) $("conv-head-sub").textContent = convSub(g);
+    renderConvList();
+  }
+  function chatPageHtml() {
+    const g = route.gid ? groupById(route.gid) : null;
+    return `
+      <section class="chat-page${g ? " has-conv" : ""}">
+        <aside class="convs" aria-label="المحادثات">
+          <div class="convs-head">
+            <h1>الشات</h1>
+            <button type="button" class="btn btn-primary btn-sm" data-action="new-conv">${icon("plus")} محادثة جديدة</button>
+          </div>
+          <div class="conv-search">
+            ${icon("search")}
+            <input id="chat-search" class="input" type="search" placeholder="دوّر في الرسايل" aria-label="دوّر في الرسايل" value="${esc(chatQuery)}" />
+          </div>
+          <nav id="conv-list" class="conv-list" aria-label="المحادثات">${chatQuery.trim() ? searchResultsHtml() : convListHtml()}</nav>
+        </aside>
+        <div class="conv">${g ? convHtml(g) : `
+          <div class="conv-empty">${icon("chat")}<p>${chatGroups.length ? "اختار محادثة من القايمة، أو ابدأ محادثة جديدة." : esc(chatError || "بيحمّل…")}</p></div>`}</div>
+      </section>`;
   }
 
   // ---------- السجل ----------
@@ -1590,9 +1961,9 @@
       "اتكررت": i.recur_count || 0,
       "مكررة من": i.duplicate_of ? `#${i.duplicate_of}` : "",
       "عدد الصور": imagesOf(i).length,
-      "رسائل النقاش": commentsFor(i.id).length,
+      "رسائل النقاش": visibleCount(ctxOf("p", i.id)),
     }));
-    const chat = comments.map((c) => ({
+    const chat = comments.filter((c) => !c.deleted_at && !c.pending).map((c) => ({
       "رقم المشكلة": c.problem_id,
       "المشكلة": findIssue(c.problem_id)?.title || "",
       "الاسم": c.author,
@@ -1629,10 +2000,33 @@
     const view = $("view");
     if (!force && typingIn(view)) { viewPending = true; return; }
     viewPending = false;
+    const narrowScreen = window.matchMedia("(max-width: 860px)").matches;
+    // الشات على الكمبيوتر بيفتح على شات الفريق على طول
+    if (route.view === "chat" && !route.gid && !narrowScreen && teamGroup()) {
+      route = { view: "chat", gid: teamGroup().id };
+      try { history.replaceState(null, "", hashOf(route)); } catch {}
+    }
+    if (route.view === "chat" && route.gid && chatGroups.length && !groupById(route.gid)) {
+      route = { view: "chat" };
+      try { history.replaceState(null, "", hashOf(route)); } catch {}
+    }
     renderTop();
     view.classList.toggle("wide", ["team", "stats"].includes(route.view));
     view.classList.toggle("narrow", route.view === "settings");
-    if (route.view === "new") {
+    view.classList.toggle("full", route.view === "chat");
+    $("main").classList.toggle("fixed", route.view === "chat");
+    const old = $("chat-list");
+    const oldKey = old?.dataset.key;
+    const keep = old && !nearBottom(old) ? old.scrollTop : null;
+    if (route.view === "chat") {
+      view.innerHTML = chatPageHtml();
+      const list = $("chat-list");
+      if (list) list.scrollTop = keep != null && oldKey === list.dataset.key ? keep : list.scrollHeight;
+      const input = $("chat-input");
+      if (input) autoGrow(input);
+      if (pendingJump) { const mid = pendingJump; pendingJump = null; setTimeout(() => jumpToMessage(mid), 60); }
+      maybeMarkRead();
+    } else if (route.view === "new") {
       view.innerHTML = composeHtml();
       renderDraftThumbs();
     } else if (route.view === "team") {
@@ -1647,13 +2041,11 @@
       view.innerHTML = `<div class="view-loading">${'<div class="sk"></div>'.repeat(4)}</div>`;
     } else {
       const i = findIssue(route.id);
-      const old = $("chat-list");
-      const keep = old && old.dataset.pid === String(route.id) && !nearBottom(old) ? old.scrollTop : null;
       view.innerHTML = i ? detailHtml(i) : notFoundHtml();
       if (i) {
         renderViewers();
         const list = $("chat-list");
-        if (list) list.scrollTop = keep ?? list.scrollHeight;
+        if (list) list.scrollTop = keep != null && oldKey === list.dataset.key ? keep : list.scrollHeight;
         const input = $("chat-input");
         if (input) autoGrow(input);
         const card = aiCache[i.id];
@@ -1665,11 +2057,17 @@
   }
 
   // ============ التنقل ============
+  let pendingJump = null;
   function go(r) {
+    const newKey = r.view === "issue" ? "p" + r.id : r.view === "chat" && r.gid ? "c" + r.gid : "";
     if (r.view !== "issue" || r.id !== route.id) {
       editingId = null;
       detailTab = "chat";
+    }
+    if (currentCtx()?.key !== newKey) {
       if (rec) stopRecording(false);
+      stopTyping();
+      closeMentionPop();
     }
     route = r;
     try { history.replaceState(null, "", hashOf(r)); } catch {}
@@ -1694,8 +2092,10 @@
 
   const soft = async (fn, fallback) => { try { return await fn(); } catch (e) { console.warn(e); return fallback; } };
 
+  // الرسايل اللي لسه بتتبعت بتفضل ظاهرة لحد ما توصل
+  const keepPending = (rows, old) => [...(rows || []), ...old.filter((m) => m.pending)];
   async function reloadComments() {
-    comments = await soft(store.listComments, comments);
+    comments = keepPending(await soft(store.listComments, comments.filter((c) => !c.pending)), comments);
     renderChat();
     renderList();
     renderTabs();
@@ -1703,19 +2103,63 @@
   }
   async function reloadRoster() {
     const [r, s] = await Promise.all([soft(store.roster, roster), soft(store.settings, settings)]);
+    const sig = (list) => list.map((x) => [x.user_id, x.display_name, x.active, x.availability, x.status_note].join("|")).join(",");
+    const changed = sig(r || []) !== sig(roster);
     roster = r || [];
     if (s) settings = s;
     renderTabs();
-    if (route.view === "team") renderView();
+    // عضو جديد بيظهر على طول في كل حتة: الفريق، واختيار المسؤول، والشات
+    if (route.view === "team" || (changed && ["new", "issue", "chat"].includes(route.view))) renderView();
   }
   async function reloadReactions() { reactions = await soft(store.listReactions, reactions); renderChat(); }
   async function reloadReads() { reads = await soft(store.listReads, reads); renderChat(); renderList(); renderTabs(); }
   async function reloadLinks() { links = await soft(store.listLinks, links); if (route.view === "issue") renderView(); }
   async function reloadReminders() { myReminders = await soft(store.listReminders, myReminders); if (route.view === "issue") renderView(); }
 
+  async function reloadCommentHides() {
+    const rows = await soft(store.listCommentHides, null);
+    if (rows) hiddenComments = new Set(rows.map((r) => r.comment_id));
+    renderChat();
+    renderList();
+    renderTabs();
+  }
+
+  // ---------- الشات ----------
+  function afterChatChange() {
+    renderChat();
+    if (route.view === "chat") renderConvList();
+    renderTabs();
+    maybeMarkRead();
+  }
+  async function reloadChatMeta() {
+    try {
+      const [g, m] = await Promise.all([store.listChatGroups(), store.listChatMembers()]);
+      chatGroups = g || [];
+      chatMembers = m || [];
+      chatError = "";
+    } catch (e) {
+      console.warn(e);
+      chatError = friendlyError(e);
+    }
+    renderTabs();
+    if (route.view === "chat") renderView();
+  }
+  async function reloadChatMessages() {
+    chatMsgs = keepPending(await soft(store.listChatMessages, chatMsgs.filter((m) => !m.pending)), chatMsgs);
+    afterChatChange();
+  }
+  async function reloadChatHides() {
+    const rows = await soft(store.listChatHides, null);
+    if (rows) chatHidden = new Set(rows.map((r) => r.message_id));
+    afterChatChange();
+  }
+  async function reloadChatReads() { chatReads = await soft(store.listChatReads, chatReads); afterChatChange(); }
+  async function reloadChatReactions() { chatReactions = await soft(store.listChatReactions, chatReactions); renderChat(); }
+
   async function loadAll() {
     await reloadProblems();
-    await Promise.all([reloadComments(), reloadRoster(), reloadReactions(), reloadReads(), reloadLinks(), reloadReminders()]);
+    await Promise.all([reloadComments(), reloadRoster(), reloadReactions(), reloadReads(), reloadLinks(), reloadReminders(),
+      reloadCommentHides(), reloadChatMeta(), reloadChatMessages(), reloadChatHides(), reloadChatReads(), reloadChatReactions()]);
     renderView();
   }
 
@@ -1944,10 +2388,11 @@
     toast(n ? `${same(name, myName()) ? "إنت مسؤول" : `${name} مسؤول`} عن ${plural(n, WORDS.problem)} مفتوحة` : "مفيش مشاكل مفتوحة متعيّنة ليه");
   }
 
-  // ---------- النقاش: إرسال ومرفقات ----------
+  // ---------- الرسايل: إرسال ومرفقات ----------
   async function addChatFiles(files) {
-    const pid = route.id;
-    const list = (chatFiles[pid] ||= []);
+    const ctx = currentCtx();
+    if (!ctx || !canWrite(ctx)) return;
+    const list = (chatFiles[ctx.key] ||= []);
     for (const f of files) {
       if (list.length >= MAX_CHAT_FILES) { toast(`أقصى حاجة ${MAX_CHAT_FILES} ملفات في الرسالة.`); break; }
       try {
@@ -1967,60 +2412,261 @@
     renderChatPending();
   }
 
-  function removePending(key) {
-    const list = chatFiles[route.id] || [];
-    const f = list.find((x) => x.key === key);
+  function removePending(fileKey) {
+    const ctx = currentCtx();
+    if (!ctx) return;
+    const list = chatFiles[ctx.key] || [];
+    const f = list.find((x) => x.key === fileKey);
     if (f) URL.revokeObjectURL(f.url);
-    chatFiles[route.id] = list.filter((x) => x.key !== key);
+    chatFiles[ctx.key] = list.filter((x) => x.key !== fileKey);
     renderChatPending();
   }
 
-  async function sendComment(voice = null) {
-    const pid = route.id;
+  function setComposeMode(ctx, mode) {
     const input = $("chat-input");
+    const prev = composeMode[ctx.key];
+    // لما نخرج من التعديل، النص اللي كان مكتوب قبله بيرجع
+    if (prev?.kind === "edit" && input) {
+      input.value = prev.draft || "";
+      chatDrafts[ctx.key] = input.value;
+    }
+    if (mode) composeMode[ctx.key] = mode;
+    else delete composeMode[ctx.key];
+    if (mode?.kind === "edit" && input) {
+      const m = findMsg(ctx, mode.mid);
+      mode.draft = prev?.kind === "edit" ? prev.draft : input.value;
+      input.value = m?.body || "";
+    }
+    if ($("compose-mode")) {
+      $("compose-mode").hidden = !mode;
+      $("compose-mode").innerHTML = composeModeHtml(ctx);
+    }
+    if (input) {
+      autoGrow(input);
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+    updateSendMode();
+  }
+
+  const msgList = (ctx) => (ctx.kind === "p" ? comments : chatMsgs);
+  function setMsgList(ctx, list) {
+    if (ctx.kind === "p") comments = list;
+    else chatMsgs = list;
+  }
+
+  async function sendMessage(voice = null) {
+    const ctx = currentCtx();
+    if (!ctx || !canWrite(ctx)) return;
+    const input = $("chat-input");
+    const mode = voice ? null : composeMode[ctx.key];
     const text = voice ? "" : (input?.value || "").trim();
-    const files = voice ? [voice] : [...(chatFiles[pid] || [])];
+    if (mode?.kind === "edit") return saveEditedMessage(ctx, mode.mid, text);
+    const files = voice ? [voice] : [...(chatFiles[ctx.key] || [])];
     if (!text && !files.length) return;
+    const replyTo = mode?.kind === "reply" ? mode.mid : null;
     if (!voice) {
       input.value = "";
-      chatDrafts[pid] = "";
-      chatFiles[pid] = [];
+      chatDrafts[ctx.key] = "";
+      chatFiles[ctx.key] = [];
+      delete composeMode[ctx.key];
       autoGrow(input);
       renderChatPending();
       closeMentionPop();
     }
+    stopTyping();
     const temp = {
-      id: "tmp-" + uid(), problem_id: pid, author: myName(), created_by: me.user_id, body: text,
+      id: "tmp-" + uid(), author: myName(), created_by: me.user_id, body: text, reply_to: replyTo,
       attachments: files.map((f) => ({ kind: f.kind, name: f.name, size: f.size, url: f.url, duration: f.duration })),
       created_at: new Date().toISOString(), pending: true,
+      [ctx.kind === "p" ? "problem_id" : "group_id"]: ctx.id,
     };
-    comments.push(temp);
+    msgList(ctx).push(temp);
     renderChat(true);
     const uploaded = [];
     try {
       for (const f of files) uploaded.push(await store.uploadChatFile(f));
-      await store.addComment({ problem_id: pid, author: myName(), body: text, attachments: uploaded });
-      comments = comments.filter((c) => c !== temp);
-      await reloadComments();
+      const row = { author: myName(), body: text, attachments: uploaded };
+      if (replyTo) row.reply_to = replyTo;
+      if (ctx.kind === "p") await store.addComment({ problem_id: ctx.id, ...row });
+      else await store.addChatMessage({ group_id: ctx.id, ...row });
+      setMsgList(ctx, msgList(ctx).filter((m) => m !== temp));
+      await (ctx.kind === "p" ? reloadComments() : reloadChatMessages());
       renderChat(true);
     } catch (err) {
       console.error(err);
-      comments = comments.filter((c) => c !== temp);
+      setMsgList(ctx, msgList(ctx).filter((m) => m !== temp));
       store.removeFiles(CHAT_BUCKET, uploaded.map((a) => a.path));
       renderChat();
-      if (!voice && route.id === pid) {
+      if (!voice && currentCtx()?.key === ctx.key) {
         const box = $("chat-input");
         if (box && !box.value) box.value = text;
-        chatFiles[pid] = [...files, ...(chatFiles[pid] || [])];
+        chatFiles[ctx.key] = [...files, ...(chatFiles[ctx.key] || [])];
+        if (replyTo) composeMode[ctx.key] = { kind: "reply", mid: replyTo };
         renderChatPending();
+        renderChat();
       }
       toast("مقدرتش أبعت الرسالة: " + friendlyError(err));
     }
   }
 
+  async function saveEditedMessage(ctx, mid, text) {
+    const m = findMsg(ctx, mid);
+    if (!m) return setComposeMode(ctx, null);
+    if (!text && !(m.attachments || []).length) return toast("الرسالة مينفعش تبقى فاضية. لو عايز تشيلها استخدم «امسح».");
+    const input = $("chat-input");
+    const draft = composeMode[ctx.key]?.draft || "";
+    delete composeMode[ctx.key];
+    if (input) { input.value = draft; chatDrafts[ctx.key] = draft; autoGrow(input); }
+    renderChat();
+    updateSendMode();
+    if (text === (m.body || "")) return;
+    const old = { body: m.body, edited_at: m.edited_at };
+    Object.assign(m, { body: text, edited_at: new Date().toISOString() });
+    renderChat();
+    try {
+      await (ctx.kind === "p" ? store.updateComment(mid, { body: text }) : store.updateChatMessage(mid, { body: text }));
+      toast("اتعدلت الرسالة");
+    } catch (err) {
+      console.error(err);
+      Object.assign(m, old);
+      renderChat();
+      toast("مقدرتش أعدّل الرسالة: " + friendlyError(err));
+    }
+    await (ctx.kind === "p" ? reloadComments() : reloadChatMessages());
+  }
+
+  // ---------- أوامر الرسالة (⋯) ----------
+  function closeMsgMenus() {
+    document.querySelectorAll(".msg-menu").forEach((p) => p.remove());
+  }
+  function openMsgMenu(mid) {
+    const ctx = currentCtx();
+    const m = ctx && findMsg(ctx, mid);
+    const open = document.querySelector(`.msg-menu[data-mid="${mid}"]`);
+    closeMsgMenus();
+    document.querySelectorAll(".react-pick").forEach((p) => p.remove());
+    if (!m || open) return;
+    const write = canWrite(ctx);
+    const deleted = !!m.deleted_at;
+    const mine = isMine(m);
+    const items = [];
+    if (!deleted && write) items.push(["reply", "reply", "رد"]);
+    if (!deleted && mine && write) items.push(["edit", "edit", "عدّل"]);
+    if (!deleted && ctx.kind === "c" && write) items.push(["pin", "pin", m.pinned_at ? "شيل التثبيت" : "ثبّت"]);
+    if (!deleted && m.body) items.push(["copy", "copy", "انسخ النص"]);
+    if (!deleted && ctx.kind === "c") {
+      items.push(["to-new", "plus", "اعمل منها مشكلة جديدة"]);
+      items.push(["to-problem", "link", "انقلها لنقاش مشكلة"]);
+    }
+    if (mine && !deleted && !m.pending) items.push(["info", "check", "مين شافها"]);
+    items.push(["hide", "eyeOff", "امسح من عندي"]);
+    if (!deleted && (mine || isAdmin)) items.push(["delete-all", "trash", "امسح من عند الكل", "danger"]);
+    const wrap = document.querySelector(`.msg[data-mid="${mid}"] .react-add-wrap`);
+    if (!wrap) return;
+    wrap.insertAdjacentHTML("beforeend", `<div class="msg-menu menu-list" data-mid="${mid}" role="menu">${items.map(([act, ic, label, cls]) =>
+      `<button type="button" role="menuitem" class="${cls || ""}" data-action="msg-act" data-act="${act}" data-mid="${mid}">${icon(ic)} ${label}</button>`).join("")}</div>`);
+    // لو مفيش مكان فوق الرسالة، القايمة تفتح لتحت
+    const menu = wrap.querySelector(".msg-menu");
+    const list = $("chat-list");
+    if (menu && list && menu.getBoundingClientRect().top < list.getBoundingClientRect().top + 4) menu.classList.add("down");
+  }
+
+  function seenInfo(ctx, m) {
+    const s = seenBy(ctx, m);
+    if (!s.total) return "مفيش حد تاني في المحادثة دي.";
+    if (!s.seen.length) return `لسه محدش شافها · مستنيين ${s.waiting.join("، ")}`;
+    if (!s.waiting.length) return `الكل شافها: ${s.seen.join("، ")}`;
+    return `شافها: ${s.seen.join("، ")} · لسه: ${s.waiting.join("، ")}`;
+  }
+
+  function jumpToMessage(mid) {
+    const el = document.querySelector(`#chat-list .msg[data-mid="${mid}"]`);
+    if (!el) return toast("الرسالة دي مش ظاهرة عندك.");
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.remove("flash");
+    void el.offsetWidth;
+    el.classList.add("flash");
+    setTimeout(() => el.classList.remove("flash"), 1800);
+  }
+
+  async function msgAction(act, mid) {
+    const ctx = currentCtx();
+    const m = ctx && findMsg(ctx, mid);
+    closeMsgMenus();
+    if (!m) return;
+    const where = ctx.kind === "p" ? `نقاش #${ctx.id}` : groupTitle(groupById(ctx.id));
+    switch (act) {
+      case "reply": return setComposeMode(ctx, { kind: "reply", mid: m.id });
+      case "edit": return setComposeMode(ctx, { kind: "edit", mid: m.id });
+      case "copy": {
+        const onFail = () => toast("مقدرتش أنسخ النص.");
+        try { navigator.clipboard.writeText(m.body).then(() => toast("اتنسخ النص"), onFail); } catch { onFail(); }
+        return;
+      }
+      case "info": return toast(seenInfo(ctx, m));
+      case "pin": {
+        const pinned_at = m.pinned_at ? null : new Date().toISOString();
+        const old = m.pinned_at;
+        m.pinned_at = pinned_at;
+        renderChat();
+        try {
+          await store.updateChatMessage(m.id, { pinned_at });
+          toast(pinned_at ? "اتثبتت الرسالة فوق المحادثة" : "اتشال التثبيت");
+        } catch (err) {
+          m.pinned_at = old;
+          renderChat();
+          toast("مقدرتش أثبّت الرسالة: " + friendlyError(err));
+        }
+        return reloadChatMessages();
+      }
+      case "to-new": {
+        const first = (m.body || attLabel(m) || "رسالة من الشات").split("\n")[0].trim();
+        Object.assign(draft, {
+          title: first.slice(0, 120),
+          details: `${m.body || ""}\n\n— من ${where}، كتبها ${m.author}`.trim(),
+        });
+        go({ view: "new" });
+        return toast("جهّزتلك المشكلة من الرسالة. راجعها ودوس «سجّل المشكلة».");
+      }
+      case "to-problem": return openForward(ctx, m);
+      case "hide": {
+        const set = ctx.kind === "p" ? hiddenComments : chatHidden;
+        set.add(m.id);
+        renderChat();
+        renderList();
+        renderTabs();
+        if (ctx.kind === "c") renderConvList();
+        try {
+          await (ctx.kind === "p" ? store.hideComment(m.id) : store.hideChatMessage(m.id));
+          toast("اتمسحت من عندك بس");
+        } catch (err) {
+          set.delete(m.id);
+          renderChat();
+          toast("مقدرتش أمسح الرسالة: " + friendlyError(err));
+        }
+        return;
+      }
+      case "delete-all": {
+        if (!confirm("تمسح الرسالة دي من عند الكل؟ هيظهر مكانها «اتمسحت الرسالة دي».")) return;
+        const paths = (m.attachments || []).map((a) => a.path);
+        try {
+          await (ctx.kind === "p" ? store.deleteCommentForAll(m.id) : store.deleteChatForAll(m.id));
+          store.removeFiles(CHAT_BUCKET, paths);
+          toast("اتمسحت الرسالة من عند الكل");
+        } catch (err) {
+          console.error(err);
+          toast("مقدرتش أمسح الرسالة: " + friendlyError(err));
+        }
+        return ctx.kind === "p" ? reloadComments() : reloadChatMessages();
+      }
+    }
+  }
+
   // ---------- رسالة صوتية ----------
   async function startRecording() {
-    if (rec) return;
+    const ctx = currentCtx();
+    if (rec || !ctx || !canWrite(ctx)) return;
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast("الجهاز ده مبيدعمش تسجيل الصوت.");
     let stream;
     try {
@@ -2032,7 +2678,7 @@
     const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
     const chunks = [];
     mr.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
-    rec = { mr, chunks, stream, start: Date.now(), pid: route.id, send: false };
+    rec = { mr, chunks, stream, start: Date.now(), key: ctx.key, send: false };
     mr.start(250);
     $("rec-bar").hidden = false;
     $("chat-form").hidden = true;
@@ -2053,40 +2699,72 @@
       if ($("rec-bar")) $("rec-bar").hidden = true;
       if ($("chat-form")) $("chat-form").hidden = false;
       const secs = (Date.now() - r.start) / 1000;
-      if (!send || secs < 0.8 || !r.chunks.length || route.id !== r.pid) return;
+      if (!send || secs < 0.8 || !r.chunks.length || currentCtx()?.key !== r.key) return;
       const type = (r.mr.mimeType || "audio/webm").split(";")[0];
       const blob = new Blob(r.chunks, { type });
       const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
-      sendComment({ key: uid(), kind: "audio", blob, name: `رسالة-صوتية.${ext}`, type, size: blob.size, url: URL.createObjectURL(blob), duration: secs });
+      sendMessage({ key: uid(), kind: "audio", blob, name: `رسالة-صوتية.${ext}`, type, size: blob.size, url: URL.createObjectURL(blob), duration: secs });
     };
     try { r.mr.stop(); } catch { r.mr.onstop(); }
     if (viewPending) setTimeout(() => renderView(), 50);
   }
 
   // ---------- الردود السريعة ----------
-  function toggleReactPicker(cid, forceOpen = false) {
-    document.querySelectorAll(".react-pick").forEach((p) => { if (Number(p.dataset.cid) !== cid || !forceOpen) p.remove(); });
-    const wrap = document.querySelector(`.msg[data-cid="${cid}"] .react-add-wrap`);
+  function toggleReactPicker(mid, forceOpen = false) {
+    closeMsgMenus();
+    document.querySelectorAll(".react-pick").forEach((p) => { if (p.dataset.mid !== String(mid) || !forceOpen) p.remove(); });
+    const wrap = document.querySelector(`.msg[data-mid="${mid}"] .react-add-wrap`);
     if (!wrap || (!forceOpen && wrap.querySelector(".react-pick"))) return;
     if (wrap.querySelector(".react-pick")) return;
-    wrap.insertAdjacentHTML("beforeend", `<div class="react-pick" data-cid="${cid}" role="menu">${EMOJIS.map((e) =>
-      `<button type="button" role="menuitem" data-action="react" data-cid="${cid}" data-emoji="${e}">${e}</button>`).join("")}</div>`);
+    wrap.insertAdjacentHTML("beforeend", `<div class="react-pick" data-mid="${mid}" role="menu">${EMOJIS.map((e) =>
+      `<button type="button" role="menuitem" data-action="react" data-mid="${mid}" data-emoji="${e}">${e}</button>`).join("")}</div>`);
   }
 
-  async function toggleReaction(cid, emoji) {
+  async function toggleReaction(mid, emoji) {
     document.querySelectorAll(".react-pick").forEach((p) => p.remove());
-    const mine = reactions.find((r) => r.comment_id === cid && r.emoji === emoji && r.user_id === me.user_id);
-    if (mine) reactions = reactions.filter((r) => r !== mine);
-    else reactions.push({ comment_id: cid, user_id: me.user_id, member: myName(), emoji });
+    const ctx = currentCtx();
+    if (!ctx || !canWrite(ctx)) return;
+    const id = Number(mid);
+    const isP = ctx.kind === "p";
+    const list = isP ? reactions : chatReactions;
+    const idKey = isP ? "comment_id" : "message_id";
+    const mine = list.find((r) => r[idKey] === id && r.emoji === emoji && r.user_id === me.user_id);
+    const next = mine ? list.filter((r) => r !== mine) : [...list, { [idKey]: id, user_id: me.user_id, member: myName(), emoji }];
+    if (isP) reactions = next;
+    else chatReactions = next;
     renderChat();
     try {
-      if (mine) await store.removeReaction(cid, emoji);
-      else await store.addReaction(cid, emoji);
+      if (isP) await (mine ? store.removeReaction(id, emoji) : store.addReaction(id, emoji));
+      else await (mine ? store.removeChatReaction(id, emoji) : store.addChatReaction(id, emoji));
     } catch (err) {
       console.error(err);
       toast("مقدرتش أسجّل الرد: " + friendlyError(err));
     }
-    reloadReactions();
+    isP ? reloadReactions() : reloadChatReactions();
+  }
+
+  // ---------- مين بيكتب ----------
+  let typingKey = null;
+  let typingSentAt = 0;
+  let typingTimer;
+  function noteTyping() {
+    const ctx = currentCtx();
+    if (!ctx || !canWrite(ctx)) return;
+    const now = Date.now();
+    if (typingKey !== ctx.key || now - typingSentAt > 2500) {
+      typingKey = ctx.key;
+      typingSentAt = now;
+      trackPresence();
+    }
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(stopTyping, 4000);
+  }
+  function stopTyping() {
+    clearTimeout(typingTimer);
+    if (!typingKey) return;
+    typingKey = null;
+    typingSentAt = 0;
+    trackPresence();
   }
 
   // ---------- المنشن @ ----------
@@ -2094,15 +2772,15 @@
   function updateMentionPop() {
     const input = $("chat-input");
     const pop = $("mention-pop");
-    if (!input || !pop) return;
+    const ctx = currentCtx();
+    if (!input || !pop || !ctx) return;
     const before = input.value.slice(0, input.selectionStart);
     const m = /(^|\s)@([^\s@]{0,30})$/.exec(before);
     if (!m) return closeMentionPop();
     const q = m[2].toLowerCase();
-    const items = activeRoster()
-      .map((r) => r.display_name)
-      .filter((n) => !same(n, myName()) && n.toLowerCase().includes(q))
-      .slice(0, 6);
+    const names = (ctx.kind === "c" ? groupMemberIds(ctx.id) : activeRoster().map((r) => r.user_id))
+      .map((u) => nameOf(u)).filter((n) => !same(n, myName()));
+    const items = [...(names.length > 1 ? ["الكل"] : []), ...names].filter((n) => n.toLowerCase().includes(q)).slice(0, 7);
     if (!items.length) return closeMentionPop();
     mentionState = { start: before.length - m[2].length - 1, end: input.selectionStart, items, index: 0 };
     renderMentionPop();
@@ -2113,7 +2791,8 @@
     pop.hidden = false;
     pop.innerHTML = mentionState.items.map((n, k) => `
       <button type="button" role="option" class="mention-opt${k === mentionState.index ? " on" : ""}" aria-selected="${k === mentionState.index}"
-        data-action="mention-pick" data-name="${esc(n)}">${avatar(n, "sm")}<span>${esc(n)}</span></button>`).join("");
+        data-action="mention-pick" data-name="${esc(n)}">${n === "الكل" ? `<span class="conv-icon team sm">${icon("users")}</span>` : avatar(n, "sm")}
+        <span>${esc(n)}</span>${n === "الكل" ? `<span class="sub">يوصل لكل اللي هنا</span>` : ""}</button>`).join("");
   }
   function closeMentionPop() {
     mentionState = null;
@@ -2122,7 +2801,8 @@
   }
   function pickMention(name) {
     const input = $("chat-input");
-    if (!input || !mentionState) return;
+    const ctx = currentCtx();
+    if (!input || !mentionState || !ctx) return;
     const v = input.value;
     const insert = `@${name} `;
     input.value = v.slice(0, mentionState.start) + insert + v.slice(mentionState.end);
@@ -2130,8 +2810,156 @@
     closeMentionPop();
     input.focus();
     input.setSelectionRange(pos, pos);
-    chatDrafts[route.id] = input.value;
+    chatDrafts[ctx.key] = input.value;
     updateSendMode();
+  }
+
+  // ---------- محادثة جديدة، والأعضاء، ونقل رسالة لمشكلة ----------
+  function openNewConv() {
+    const people = activeRoster().filter((r) => r.user_id !== me.user_id);
+    if (!people.length) return toast("لسه مفيش حد تاني في الفريق.");
+    openModal(`
+      <h2>${icon("chat")} محادثة جديدة</h2>
+      <p>اختار واحد عشان تكلّمه لوحده، أو أكتر من واحد عشان تعمل مجموعة.</p>
+      <div class="pick-list" id="conv-pick">${people.map((r) => `
+        <label class="pick">
+          <input type="checkbox" value="${r.user_id}" />
+          ${avatar(r.display_name, "sm")}<span class="pick-name">${esc(r.display_name)}</span>
+          ${r.availability && r.availability !== "available" ? `<span class="av-chip ${AVAILABILITY[r.availability].cls}">${AVAILABILITY[r.availability].label}</span>` : ""}
+        </label>`).join("")}</div>
+      <div class="field" id="conv-name-field" hidden>
+        <label for="conv-name">اسم المجموعة <span class="optional">اختياري</span></label>
+        <input id="conv-name" class="input" type="text" maxlength="60" placeholder="مثلًا: فريق الدعم" />
+      </div>
+      <p class="field-error" id="conv-error" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" data-modal="close">إلغاء</button>
+        <button type="button" class="btn btn-primary" data-modal="create">ابدأ المحادثة</button>
+      </div>`,
+      async (a, btn) => {
+        if (a !== "create") return;
+        const ids = [...document.querySelectorAll("#conv-pick input:checked")].map((x) => x.value);
+        const err = $("conv-error");
+        if (!ids.length) { err.hidden = false; err.textContent = "اختار حد على الأقل."; return; }
+        const name = ids.length > 1 ? $("conv-name").value.trim() : "";
+        // شات خاص مع نفس الشخص موجود قبل كده؟ نفتحه بدل ما نعمل واحد جديد
+        if (ids.length === 1) {
+          const existing = chatGroups.find((g) => !g.is_team && !g.name && isParticipant(g.id) &&
+            memberRows(g.id).length === 2 && memberRows(g.id).some((m) => m.user_id === ids[0]));
+          if (existing) { closeModal(); return go({ view: "chat", gid: existing.id }); }
+        }
+        btn.disabled = true;
+        try {
+          const gid = await store.createGroup(name, ids);
+          closeModal();
+          await reloadChatMeta();
+          go({ view: "chat", gid: Number(gid) });
+          toast(ids.length > 1 ? "اتعملت المجموعة" : "اتفتحت المحادثة");
+        } catch (e) {
+          btn.disabled = false;
+          err.hidden = false;
+          err.textContent = friendlyError(e);
+        }
+      });
+    $("conv-pick").addEventListener("change", () => {
+      $("conv-name-field").hidden = document.querySelectorAll("#conv-pick input:checked").length < 2;
+    });
+  }
+
+  function openConvInfo(gid) {
+    const g = groupById(gid);
+    if (!g || g.is_team) return;
+    const canManage = g.created_by === me.user_id || isAdmin;
+    const part = isParticipant(gid);
+    const ids = memberRows(gid).map((m) => m.user_id);
+    const others = activeRoster().filter((r) => !ids.includes(r.user_id));
+    openModal(`
+      <h2>${icon("users")} ${esc(groupTitle(g))}</h2>
+      ${canManage ? `
+        <div class="field">
+          <label for="conv-rename">اسم المجموعة</label>
+          <div class="inline">
+            <input id="conv-rename" class="input" type="text" maxlength="60" value="${esc(g.name || "")}" placeholder="من غير اسم" />
+            <button type="button" class="btn btn-secondary" data-modal="rename">احفظ</button>
+          </div>
+        </div>` : ""}
+      <div class="modal-list">
+        <h3>الأعضاء · ${ids.length}</h3>
+        <ul>${ids.map((u) => `
+          <li>${avatar(nameOf(u), "sm")}<span>${esc(nameOf(u))}${u === me.user_id ? ' <span class="tag-sm">إنت</span>' : ""}${u === g.created_by ? ' <span class="tag-sm">عمل المجموعة</span>' : ""}</span>
+            ${canManage && u !== me.user_id ? `<button type="button" class="link-btn danger-link" data-modal="remove" data-uid="${u}">شيله</button>` : ""}</li>`).join("")}</ul>
+      </div>
+      ${part && others.length ? `
+        <div class="field">
+          <label for="conv-add">ضيف حد للمجموعة</label>
+          <div class="inline">
+            <select id="conv-add" class="input">${others.map((r) => `<option value="${r.user_id}">${esc(r.display_name)}</option>`).join("")}</select>
+            <button type="button" class="btn btn-secondary" data-modal="add">ضيف</button>
+          </div>
+        </div>` : ""}
+      <div class="dialog-actions">
+        ${part ? `<button type="button" class="btn btn-ghost danger" data-modal="leave">اخرج من المحادثة</button>` : ""}
+        <button type="button" class="btn btn-primary" data-modal="close">تمام</button>
+      </div>`,
+      async (a, btn) => {
+        if (a === "rename") {
+          await run(() => store.renameGroup(gid, $("conv-rename").value.trim()), "اتغيّر الاسم");
+        } else if (a === "remove") {
+          if (!confirm(`تشيل ${nameOf(btn.dataset.uid)} من المحادثة؟`)) return;
+          await run(() => store.removeGroupMember(gid, btn.dataset.uid), "اتشال من المحادثة");
+        } else if (a === "add") {
+          await run(() => store.addGroupMember(gid, $("conv-add").value), "اتضاف للمحادثة");
+        } else if (a === "leave") {
+          if (!confirm("تخرج من المحادثة دي؟ مش هتشوف رسايلها تاني إلا لو حد ضافك.")) return;
+          const ok = await run(() => store.removeGroupMember(gid, me.user_id), "خرجت من المحادثة");
+          if (ok) {
+            closeModal();
+            await reloadChatMeta();
+            return go({ view: "chat" });
+          }
+          return;
+        } else return;
+        await reloadChatMeta();
+        if (groupById(gid)) openConvInfo(gid);
+        else closeModal();
+      });
+  }
+
+  function openForward(ctx, m) {
+    const where = groupTitle(groupById(ctx.id));
+    const results = (q) => {
+      const s = q.trim().toLowerCase().replace("#", "");
+      return [...issues]
+        .sort((a, b) => (isOpen(b) - isOpen(a)) || new Date(b.created_at) - new Date(a.created_at))
+        .filter((x) => !s || String(x.id) === s || x.title.toLowerCase().includes(s))
+        .slice(0, 8)
+        .map((x) => `
+          <li class="link-row">
+            <span class="dot${x.status === "solved" ? " solved" : x.status === "in_progress" ? " working" : ""}"></span>
+            <span class="ref">#${x.id}</span><span class="link-title">${esc(x.title)}</span>
+            <span class="link-btns"><button type="button" class="btn btn-secondary btn-sm" data-modal="fwd" data-id="${x.id}">انقلها هنا</button></span>
+          </li>`).join("") || `<li class="none">مفيش مشاكل مطابقة.</li>`;
+    };
+    openModal(`
+      <h2>${icon("link")} انقل الرسالة لنقاش مشكلة</h2>
+      <p>هتتنسخ في نقاش المشكلة اللي تختارها، ومعاها اسم اللي كتبها.</p>
+      <input id="fwd-search" class="input" type="search" placeholder="دوّر باسم المشكلة أو رقمها" autocomplete="off" />
+      <ul id="fwd-results" class="link-results">${results("")}</ul>
+      <div class="dialog-actions"><button type="button" class="btn btn-ghost" data-modal="close">إلغاء</button></div>`,
+      async (a, btn) => {
+        if (a !== "fwd") return;
+        const pid = Number(btn.dataset.id);
+        const files = (m.attachments || []).map((x) => x.name).filter(Boolean);
+        const body = [`↪️ من ${where}، كتبها ${m.author}:`, m.body, files.length ? `📎 ${files.join("، ")}` : ""]
+          .filter(Boolean).join("\n").slice(0, 2000);
+        btn.disabled = true;
+        const ok = await run(() => store.addComment({ problem_id: pid, author: myName(), body, attachments: [] }), `اتنقلت لنقاش #${pid}`);
+        if (ok) { closeModal(); reloadComments(); }
+        else btn.disabled = false;
+      });
+    const search = $("fwd-search");
+    search.addEventListener("input", () => { $("fwd-results").innerHTML = results(search.value); });
+    setTimeout(() => search.focus(), 50);
   }
 
   // ---------- تلخيص النقاش ----------
@@ -2570,7 +3398,7 @@
   function handleFiles(files, target) {
     const list = [...(files || [])];
     if (!list.length) return;
-    if (target === "chat") return addChatFiles(list);
+    if (target === "chat" || route.view === "chat") return addChatFiles(list);
     const images = list.filter((f) => /^image\//.test(f.type));
     if (!images.length) return toast("الملف ده مش صورة.");
     if (route.view === "new") addDraftImages(images);
@@ -2612,10 +3440,17 @@
       if (id === "title" && t.value.trim()) flagError("title", "title-error", false);
       if (id === "edit-title" && t.value.trim()) flagError("edit-title", "edit-title-error", false);
       if (id === "chat-input") {
-        chatDrafts[route.id] = t.value;
+        const ctx = currentCtx();
+        if (ctx && composeMode[ctx.key]?.kind !== "edit") chatDrafts[ctx.key] = t.value;
         autoGrow(t);
         updateSendMode();
         updateMentionPop();
+        if (t.value.trim()) noteTyping();
+        else stopTyping();
+      }
+      if (id === "chat-search") {
+        chatQuery = t.value;
+        renderConvList();
       }
     });
 
@@ -2654,7 +3489,11 @@
           if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); return pickMention(mentionState.items[mentionState.index]); }
           if (e.key === "Escape") { e.preventDefault(); return closeMentionPop(); }
         }
-        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendComment(); }
+        if (e.key === "Escape" && currentCtx() && composeMode[currentCtx().key]) {
+          e.preventDefault();
+          return setComposeMode(currentCtx(), null);
+        }
+        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(); }
       }
     });
 
@@ -2663,7 +3502,7 @@
       if (e.target.id === "issue-form") createIssue();
       if (e.target.id === "resolve-form") resolveIssue(e.target);
       if (e.target.id === "edit-form") saveEdit();
-      if (e.target.id === "chat-form") sendComment();
+      if (e.target.id === "chat-form") sendMessage();
     });
 
     const onAction = async (e) => {
@@ -2687,7 +3526,8 @@
         case "view-image":
           return openLightbox({ srcs: imagesOf(i).map(imageUrl), refs: imagesOf(i), index: Number(btn.dataset.index), issueId: route.id, deletable: true });
         case "chat-image": {
-          const c = comments.find((x) => String(x.id) === btn.dataset.cid);
+          const ctx = currentCtx();
+          const c = ctx && findMsg(ctx, btn.dataset.mid);
           const imgs = (c?.attachments || []).filter((x) => x.kind === "image");
           return openLightbox({ srcs: imgs.map(attUrl), index: Number(btn.dataset.index) });
         }
@@ -2717,8 +3557,35 @@
         case "record": return startRecording();
         case "rec-cancel": return stopRecording(false);
         case "rec-send": return stopRecording(true);
-        case "react-open": return toggleReactPicker(Number(btn.dataset.cid));
-        case "react": return toggleReaction(Number(btn.dataset.cid), btn.dataset.emoji);
+        case "react-open": return toggleReactPicker(btn.dataset.mid);
+        case "react": return toggleReaction(btn.dataset.mid, btn.dataset.emoji);
+        // أوامر الرسالة
+        case "msg-menu": return openMsgMenu(btn.dataset.mid);
+        case "msg-act": return msgAction(btn.dataset.act, btn.dataset.mid);
+        case "compose-cancel": return currentCtx() && setComposeMode(currentCtx(), null);
+        case "ticks": {
+          const ctx = currentCtx();
+          const m = ctx && findMsg(ctx, btn.dataset.mid);
+          return m && toast(seenInfo(ctx, m));
+        }
+        case "jump": return jumpToMessage(btn.dataset.mid);
+        // الشات
+        case "open-conv": chatQuery = ""; return go({ view: "chat", gid: Number(btn.dataset.gid) });
+        case "open-hit":
+          pendingJump = btn.dataset.mid;
+          return go({ view: "chat", gid: Number(btn.dataset.gid) });
+        case "conv-back": return go({ view: "chat" });
+        case "conv-info": return openConvInfo(route.gid);
+        case "new-conv": return openNewConv();
+        case "jump-pin": {
+          const gid = Number(btn.dataset.gid);
+          const pins = pinnedOf(gid);
+          if (!pins.length) return;
+          const k = (pinIndex[gid] || 0) % pins.length;
+          jumpToMessage(pins[k].id);
+          pinIndex[gid] = k + 1;
+          return renderConvChrome();
+        }
         case "mention-pick": return pickMention(btn.dataset.name);
         case "show-assigned": return showAssigned(btn.dataset.name);
         case "admin-remove": return adminRemove(btn.dataset.uid, btn.dataset.name);
@@ -2745,7 +3612,10 @@
     // قفل القوايم لما تدوس برّاها
     document.addEventListener("click", (e) => {
       document.querySelectorAll("details.menu[open]").forEach((m) => { if (!m.contains(e.target)) m.removeAttribute("open"); });
-      if (!e.target.closest(".react-add-wrap")) document.querySelectorAll(".react-pick").forEach((p) => p.remove());
+      if (!e.target.closest(".react-add-wrap")) {
+        document.querySelectorAll(".react-pick").forEach((p) => p.remove());
+        closeMsgMenus();
+      }
       if (!e.target.closest(".chat-compose")) closeMentionPop();
     });
 
@@ -2831,6 +3701,7 @@
         closeSidebar();
         document.querySelectorAll("details.menu[open]").forEach((m) => m.removeAttribute("open"));
         document.querySelectorAll(".react-pick").forEach((p) => p.remove());
+        closeMsgMenus();
       }
       const a = document.activeElement;
       const typing = a && ["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName);
@@ -2859,6 +3730,7 @@
     setInterval(() => {
       if ($("now")) $("now").textContent = dateTime(new Date().toISOString());
       if (["issue", "team"].includes(route.view) && $("lightbox").hidden && !$("modal").open) renderView();
+      if (route.view === "chat") renderConvList();
     }, 30e3);
     setInterval(() => document.visibilityState === "visible" && touch(), 4 * 60e3);
   }
@@ -2893,6 +3765,13 @@
       problem_links: reloadLinks,
       reminders: reloadReminders,
       problem_events: () => { if (route.view === "issue" && detailTab === "history") loadHistory(route.id); },
+      comment_hides: reloadCommentHides,
+      chat_groups: reloadChatMeta,
+      chat_group_members: reloadChatMeta,
+      chat_messages: reloadChatMessages,
+      chat_message_hides: reloadChatHides,
+      chat_reads: reloadChatReads,
+      chat_reactions: reloadChatReactions,
     });
     startPresence();
     loadAll().catch((e) => {

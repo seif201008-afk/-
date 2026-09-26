@@ -1,6 +1,7 @@
 // دالة السيرفر بتاعة الموقع. بتعمل 3 حاجات:
 // 1) إشعارات الموبايل مع كل حدث (قاعدة البيانات بتناديها): مشكلة جديدة، حل، "حصلت تاني"،
-//    بدأ الشغل عليها، تعيين مسؤول، رسالة في النقاش، ومنشن @اسم.
+//    بدأ الشغل عليها، تعيين مسؤول، رسالة في النقاش، ومنشن @اسم أو @الكل،
+//    ورسايل شات الفريق والمجموعات (بتوصل لأعضاء المجموعة بس).
 // 2) كل 5 دقايق (pg_cron): "فكّرني بعدين"، وتذكير المسؤول بالمشاكل المتأخرة، والملخص اليومي.
 // 3) تلخيص النقاش بالذكاء الاصطناعي (Gemini) لما عضو يدوس "لخّص النقاش".
 // المفاتيح بتتقري من جدول push_config، فمش محتاجة أي Secrets.
@@ -54,13 +55,22 @@ type Member = {
 type Sub = { endpoint: string; p256dh: string; auth: string; member: string; user_id: string | null };
 type Message = { title: string; body: string; url: string; tag: string };
 type Event = {
-  type: "new_problem" | "solved" | "recurred" | "started" | "assigned" | "comment";
-  problem_id: number; title?: string; actor?: string; assignee?: string; author?: string;
+  type: "new_problem" | "solved" | "recurred" | "started" | "assigned" | "comment" | "chat";
+  problem_id?: number; title?: string; actor?: string; assignee?: string; author?: string;
   priority?: string; text?: string; attachment?: string | null; recur_count?: number;
+  // رسايل الشات
+  group_id?: number; group_name?: string | null; is_team?: boolean; message_id?: number; recipients?: string[];
 };
 
 const same = (a?: string | null, b?: string | null) =>
   !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+
+// @اسم بيذكر الشخص، و@الكل بيذكر كل اللي في المحادثة
+const ALL_TAGS = ["@الكل", "@all"];
+function mentions(text: string | undefined, name: string) {
+  const t = (text ?? "").toLowerCase();
+  return ALL_TAGS.some((tag) => t.includes(tag)) || t.includes("@" + name.trim().toLowerCase());
+}
 
 // ---------------- الوقت حسب بلد كل عضو ----------------
 function localParts(tz: string, d = new Date()): { date: string; hour: number } {
@@ -156,13 +166,24 @@ function messageFor(ev: Event, name: string): Message | null {
     case "comment": {
       if (same(name, ev.actor)) return null;
       const text = (ev.text ?? "").trim() || ATTACH_LABEL[ev.attachment ?? ""] || "";
-      const mentioned = (ev.text ?? "").toLowerCase().includes("@" + name.trim().toLowerCase());
       return {
-        title: mentioned ? `${ev.actor} ذكرك في «${title}»` : `${ev.actor} في «${title}»`,
+        title: mentions(ev.text, name) ? `${ev.actor} ذكرك في «${title}»` : `${ev.actor} في «${title}»`,
         body: text,
         url,
         tag: `p${ev.problem_id}-chat`,
       };
+    }
+    case "chat": {
+      if (same(name, ev.actor)) return null;
+      const who = ev.actor || "حد من الفريق";
+      const text = (ev.text ?? "").trim() || ATTACH_LABEL[ev.attachment ?? ""] || "";
+      const where = ev.is_team ? "شات الفريق" : ev.group_name ? `«${ev.group_name}»` : "";
+      const mentioned = mentions(ev.text, name);
+      // شات خاص من غير اسم: زي واتساب، العنوان اسم اللي بعت بس
+      const head = where
+        ? mentioned ? `${who} ذكرك في ${where}` : `${who} في ${where}`
+        : mentioned ? `${who} ذكرك` : who;
+      return { title: head, body: text, url: `#c${ev.group_id}`, tag: `c${ev.group_id}-chat` };
     }
   }
   return null;
@@ -170,8 +191,10 @@ function messageFor(ev: Event, name: string): Message | null {
 
 async function handleEvent(s: Sender, ev: Event) {
   const urgent = ev.priority === "urgent";
+  // رسايل الشات بتوصل بس للي في المحادثة (القايمة بتيجي من قاعدة البيانات)
+  const only = ev.type === "chat" ? new Set(ev.recipients ?? []) : null;
   await Promise.all(
-    s.targets().map(async (t) => {
+    s.targets().filter((t) => !only || (!!t.sub.user_id && only.has(t.sub.user_id))).map(async (t) => {
       const msg = messageFor(ev, t.name);
       if (!msg) return;
       // ساعات الهدوء: مفيش إشعار إلا للعاجل
@@ -287,7 +310,7 @@ async function summarize(req: Request, body: { problem_id?: number }) {
   const [p] = await getJson<any[]>(`team_problems?id=eq.${id}&select=title,details,note,status,assignee,solution`);
   if (!p) return json({ error: "not_found" }, 404);
   const cs = await getJson<{ author: string; body: string; attachments: { kind?: string }[]; created_at: string }[]>(
-    `problem_comments?problem_id=eq.${id}&select=author,body,attachments,created_at&order=created_at`,
+    `problem_comments?problem_id=eq.${id}&deleted_at=is.null&select=author,body,attachments,created_at&order=created_at`,
   );
   if (!cs.length) return json({ error: "empty" }, 400);
 
