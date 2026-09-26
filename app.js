@@ -605,8 +605,13 @@
 
   // الموقع قدام الشخص فعلًا (مش في تاب تاني ولا الكروم متصغّر)
   const pageHere = () => document.visibilityState === "visible" && document.hasFocus();
+  // اللي الموقع مفتوح عنده بس في الخلفية ممكن اتصاله اللحظي يقف، فبنعتمد كمان على آخر نبض منه
+  const recentlySeen = (r) => !!r?.last_seen && Date.now() - new Date(r.last_seen) < 3 * 60e3 && !r.removed;
   function renderPresence() {
-    const list = [...online].sort((a, b) => (a.uid === me?.user_id ? -1 : b.uid === me?.user_id ? 1 : 0) || (b.here - a.here));
+    const inPresence = new Set(online.map((o) => o.uid));
+    const background = activeRoster().filter((r) => !inPresence.has(r.user_id) && r.user_id !== me?.user_id && recentlySeen(r))
+      .map((r) => ({ uid: r.user_id, name: r.display_name, here: false, viewing: [], typing: [] }));
+    const list = [...online, ...background].sort((a, b) => (a.uid === me?.user_id ? -1 : b.uid === me?.user_id ? 1 : 0) || (b.here - a.here));
     const here = list.filter((o) => o.here).length;
     const away = list.length - here;
     $("presence-text").textContent = !list.length ? "محدش فاتح دلوقتي"
@@ -1623,8 +1628,8 @@
     const card = (r) => {
       const isMe = r.user_id === me.user_id;
       const o = onlineEntry(r.display_name);
-      const on = !!o;
-      const idle = on && !o.here;
+      const on = !!o || recentlySeen(r);
+      const idle = on && !o?.here;
       const viewing = o?.viewing.map(findIssue).filter(Boolean)[0];
       const av = AVAILABILITY[r.availability] || AVAILABILITY.available;
       const stats = memberStats(r.display_name);
@@ -1692,7 +1697,7 @@
       </section>`;
 
     const sorted = [...active].sort((a, b) =>
-      (isOnline(b.display_name) - isOnline(a.display_name)) || (new Date(b.last_seen) - new Date(a.last_seen)));
+      (!!onlineEntry(b.display_name)?.here - !!onlineEntry(a.display_name)?.here) || (new Date(b.last_seen) - new Date(a.last_seen)));
     return `
       <section class="page">
         <header class="view-head">
@@ -2134,7 +2139,8 @@
     if (s) settings = s;
     renderTabs();
     // عضو جديد بيظهر على طول في كل حتة: الفريق، واختيار المسؤول، والشات
-    if (route.view === "team" || (changed && ["new", "issue", "chat"].includes(route.view))) renderView();
+    renderPresence();
+    if (changed && ["new", "issue", "chat"].includes(route.view)) renderView();
   }
   async function reloadReactions() { reactions = await soft(store.listReactions, reactions); renderChat(); }
   async function reloadReads() { reads = await soft(store.listReads, reads); renderChat(); renderList(); renderTabs(); }
@@ -3822,7 +3828,7 @@
       if (["issue", "team"].includes(route.view) && $("lightbox").hidden && !$("modal").open) renderView();
       if (route.view === "chat") renderConvList();
     }, 30e3);
-    setInterval(() => document.visibilityState === "visible" && touch(), 4 * 60e3);
+    setInterval(touch, 60e3);
   }
 
   async function touch() {
@@ -3904,9 +3910,27 @@
       healing = false;
     }
   }
+  let hiddenAt = 0;
+  async function comeBack() {
+    if (!started || !me) return;
+    touch();
+    try { if (!db.realtime.isConnected()) db.realtime.connect(); } catch {}
+    // نعمل قناة "مين فاتح" من جديد عشان الباقيين يشوفوا إني رجعت فورًا
+    const old = presenceCh;
+    presenceCh = null;
+    if (old) { try { await db.removeChannel(old); } catch {} }
+    startPresence();
+    // لو كنت غايب شوية، نجيب أي حاجة فاتتني
+    if (hiddenAt && Date.now() - hiddenAt > 30e3) loadAll().catch((e) => console.warn(e));
+    hiddenAt = 0;
+    healRealtime();
+  }
   function startHealing() {
     const wake = () => healRealtime();
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wake(); });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") comeBack();
+      else { hiddenAt = Date.now(); touch(); }
+    });
     window.addEventListener("focus", wake);
     window.addEventListener("online", wake);
     window.addEventListener("pageshow", wake);
