@@ -1237,6 +1237,22 @@ grant execute on function public.presence_ping(text, boolean, bigint, boolean) t
 grant execute on function public.team_presence() to authenticated;
 
 -- =====================================================================
+-- 6.6) تحويل الرسايل الصوتية لكلام مكتوب (Gemini)
+-- كاش بمسار الملف، عشان لو حد تاني دوس "حوّلها لكلام" على نفس الرسالة ميتكلفش تاني
+-- =====================================================================
+create table if not exists public.voice_transcripts (
+  att_path   text primary key,
+  text       text not null,
+  created_at timestamptz not null default now()
+);
+alter table public.voice_transcripts enable row level security;
+revoke all on public.voice_transcripts from anon, authenticated;
+grant select on public.voice_transcripts to authenticated;
+drop policy if exists "team reads transcripts" on public.voice_transcripts;
+create policy "team reads transcripts" on public.voice_transcripts for select to authenticated
+  using ((select public.is_team_member()));
+
+-- =====================================================================
 -- 7) التحديث اللحظي، والإضافات، والمواعيد
 -- =====================================================================
 do $$

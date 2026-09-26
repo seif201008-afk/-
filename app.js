@@ -265,6 +265,7 @@
   const chatDrafts = {};
   const chatFiles = {};
   const aiCache = {};
+  const transcripts = {}; // att_path → { loading } | { text } | { error }
   let detailTab = "chat";
   let viewPending = false;
   let uploadingIssue = null;
@@ -376,6 +377,7 @@
     ping: (device, here, viewing) => must(db.rpc("presence_ping", { p_device: device, p_here: here, p_viewing: viewing })),
     presence: () => must(db.rpc("team_presence")),
     adminSetRemoved: (u, removed) => must(db.rpc("admin_set_removed", { p_user: u, p_removed: removed })),
+    getTranscript: (path) => must(db.from("voice_transcripts").select("text").eq("att_path", path).maybeSingle()),
     async uploadAvatar({ blob, ext }) {
       const path = `${me.user_id}/${uid()}.${ext}`;
       const { error } = await db.storage.from(AVATAR_BUCKET).upload(path, blob, {
@@ -1350,8 +1352,14 @@
       ${imgs.length ? `<div class="att-imgs">${imgs.map((a, n) => `
         <button type="button" class="att-img" data-action="chat-image" data-mid="${m.id}" data-index="${n}" aria-label="افتح الصورة">
           <img src="${esc(attUrl(a))}" alt="" loading="lazy" /></button>`).join("")}</div>` : ""}
-      ${atts.filter((a) => a.kind === "audio").map((a) => `
-        <div class="att-audio">${icon("mic")}<audio controls preload="none" src="${esc(attUrl(a))}"></audio>${a.duration ? `<span class="att-dur">${clock(a.duration)}</span>` : ""}</div>`).join("")}
+      ${atts.filter((a) => a.kind === "audio").map((a) => {
+        const st = transcripts[a.path];
+        return `<div class="att-audio">${icon("mic")}<audio controls preload="none" src="${esc(attUrl(a))}"></audio>${a.duration ? `<span class="att-dur">${clock(a.duration)}</span>` : ""}
+          ${!st ? `<button type="button" class="link-btn att-transcribe" data-action="transcribe" data-path="${esc(a.path)}">حوّلها لكلام</button>` : ""}</div>
+          ${st?.loading ? `<p class="transcript loading">بيحوّلها لكلام…</p>`
+            : st?.text ? `<p class="transcript">${esc(st.text)}</p>`
+            : st?.error ? `<p class="transcript error">${esc(st.error)}</p>` : ""}`;
+      }).join("")}
       ${atts.filter((a) => a.kind === "file").map((a) => `
         <a class="att-file" href="${esc(attUrl(a))}" target="_blank" rel="noopener" download="${esc(a.name)}">
           ${icon("file")}<span class="att-name">${esc(a.name)}</span><span class="att-size">${fileSize(a.size || 0)}</span></a>`).join("")}
@@ -3290,6 +3298,41 @@
     if (route.id === pid) showAiCard(pid);
   }
 
+  // لو حد تاني سبق وحوّل نفس الرسالة، بيرجعلنا النص من الكاش على طول من غير Gemini
+  async function transcribeAudio(path) {
+    if (transcripts[path]) return;
+    transcripts[path] = { loading: true };
+    renderChat();
+    try {
+      const cached = await soft(() => store.getTranscript(path), null);
+      if (cached?.text) { transcripts[path] = { text: cached.text }; return renderChat(); }
+      const { data } = await db.auth.getSession();
+      const token = data?.session?.access_token;
+      const res = await fetch(`${cfg.SUPABASE_URL}/functions/v1/notify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: cfg.SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ type: "transcribe", path }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok || !out.text) {
+        const why = {
+          no_key: "خاصية التحويل محتاجة مفتاح Gemini يتحط في Supabase الأول.",
+          not_member: "إنت مش ضمن الفريق دلوقتي.",
+          not_found: "الملف الصوتي ده مش موجود.",
+          too_big: "الرسالة الصوتية دي كبيرة زيادة عن اللي ممكن نحوّله.",
+          gemini: "Gemini مردّش. جرّب تاني بعد شوية.",
+        }[out.error] || "مقدرتش أحوّلها دلوقتي. جرّب تاني بعد شوية.";
+        transcripts[path] = { error: why };
+      } else {
+        transcripts[path] = { text: out.text };
+      }
+    } catch (e) {
+      console.error(e);
+      transcripts[path] = { error: "مقدرتش أوصل لخدمة التحويل. اتأكد من النت." };
+    }
+    renderChat();
+  }
+
   // ---------- نافذة الحوارات ----------
   let modalHandler = null;
   function openModal(html, handler) {
@@ -3893,6 +3936,7 @@
             "اتفتحت تاني وتعلّمت إنها اتكررت");
         case "reopen": return updateIssue({ status: "open", solved_at: null, solved_by: null }, "المشكلة اتفتحت تاني");
         case "summarize": return summarize();
+        case "transcribe": return transcribeAudio(btn.dataset.path);
         case "ai-close": delete aiCache[route.id]; $("ai-card").hidden = true; return;
         case "chat-attach": return $("chat-file-input").click();
         case "remove-pending": return removePending(btn.dataset.key);

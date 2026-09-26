@@ -351,6 +351,71 @@ async function summarize(req: Request, body: { problem_id?: number }) {
   return json({ summary: text });
 }
 
+// حوّل رسالة صوتية لكلام مكتوب. النتيجة بتتخزن بمسار الملف، فلو حد تاني دوس الزرار على نفس
+// الرسالة بيرجع من الكاش على طول من غير ما نتصل بـ Gemini تاني (ومن غير ما نتحاسب تاني).
+const AUDIO_MIME: Record<string, string> = { webm: "audio/webm", ogg: "audio/ogg", oga: "audio/ogg", m4a: "audio/mp4", mp4: "audio/mp4", mp3: "audio/mpeg", wav: "audio/wav", aac: "audio/aac" };
+
+function toBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  return btoa(binary);
+}
+
+async function transcribe(req: Request, body: { path?: string }) {
+  const authHeader = req.headers.get("authorization") ?? "";
+  if (!authHeader.startsWith("Bearer ")) return json({ error: "unauthorized" }, 401);
+  const u = await fetch(`${SB_URL}/auth/v1/user`, { headers: { apikey: SB_KEY, Authorization: authHeader } });
+  if (!u.ok) return json({ error: "unauthorized" }, 401);
+  const user = await u.json();
+  const okRes = await rest("rpc/is_active_member", { method: "POST", body: JSON.stringify({ p_uid: user.id }) });
+  if (!okRes.ok || (await okRes.json()) !== true) return json({ error: "not_member" }, 403);
+
+  const path = String(body.path ?? "").trim();
+  if (!path || path.includes("..")) return json({ error: "bad_request" }, 400);
+
+  const cached = await getJson<{ text: string }[]>(`voice_transcripts?att_path=eq.${encodeURIComponent(path)}&select=text`);
+  if (cached[0]?.text) return json({ text: cached[0].text, cached: true });
+
+  const [cfg] = await getJson<Config[]>("push_config?id=eq.1&select=gemini_key,gemini_model");
+  if (!cfg?.gemini_key) return json({ error: "no_key" }, 400);
+
+  const audioRes = await fetch(`${SB_URL}/storage/v1/object/public/chat-files/${path}`);
+  if (!audioRes.ok) return json({ error: "not_found" }, 404);
+  const buf = await audioRes.arrayBuffer();
+  if (buf.byteLength > 10 * 1024 * 1024) return json({ error: "too_big" }, 400);
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const mimeType = AUDIO_MIME[ext] || audioRes.headers.get("content-type") || "audio/webm";
+
+  const model = cfg.gemini_model || "gemini-2.5-flash";
+  const r = await fetch(`${GEMINI}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": cfg.gemini_key },
+    body: JSON.stringify({
+      contents: [{
+        role: "user",
+        parts: [
+          { text: "دي رسالة صوتية بالعربي المصري. اكتبها كلام مكتوب بالظبط زي ما قالها الشخص، من غير أي تعليق أو مقدمة. لو الصوت مش واضح أو مفيش كلام، اكتب [مفيش كلام واضح] بس." },
+          { inlineData: { mimeType, data: toBase64(buf) } },
+        ],
+      }],
+      generationConfig: { temperature: 0.1 },
+    }),
+  });
+  if (!r.ok) {
+    const detail = (await r.text()).slice(0, 300);
+    console.error("gemini transcribe", r.status, detail);
+    return json({ error: "gemini", status: r.status, detail }, 502);
+  }
+  const data = await r.json();
+  const text = (data.candidates?.[0]?.content?.parts ?? []).map((x: { text?: string }) => x.text ?? "").join("").trim();
+  if (!text) return json({ error: "gemini_empty" }, 502);
+
+  await rest("voice_transcripts", { method: "POST", body: JSON.stringify({ att_path: path, text }), headers: { Prefer: "resolution=ignore-duplicates" } });
+  return json({ text });
+}
+
 // ---------------- البداية ----------------
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -365,6 +430,7 @@ Deno.serve(async (req) => {
 
   try {
     if (body.type === "summarize") return await summarize(req, body);
+    if (body.type === "transcribe") return await transcribe(req, body);
 
     const [cfg] = await getJson<Config[]>("push_config?id=eq.1&select=*");
     if (!cfg || req.headers.get("x-hook-secret") !== cfg.hook_secret) {
@@ -380,6 +446,6 @@ Deno.serve(async (req) => {
   } catch (e) {
     console.error(e);
     const res = { error: String((e as Error)?.message ?? e) };
-    return body.type === "summarize" ? json(res, 500) : Response.json(res, { status: 500 });
+    return body.type === "summarize" || body.type === "transcribe" ? json(res, 500) : Response.json(res, { status: 500 });
   }
 });
