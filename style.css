@@ -876,6 +876,7 @@ body.no-scroll { overflow: hidden; }
   color: var(--ink);
   cursor: pointer;
 }
+.prop-input { cursor: text; }
 .prop-select.is-urgent { border-color: var(--danger); color: var(--danger); font-weight: 600; }
 select.input { cursor: pointer; }
 

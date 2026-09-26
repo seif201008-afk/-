@@ -519,9 +519,6 @@
     if (other) $("filter-chip-text").textContent = `مسؤوليات ${assigneeFilter}`;
 
     $("names").innerHTML = memberNames().map((n) => `<option value="${esc(n)}"></option>`).join("");
-    // قايمة "المسؤول" في فورم المشكلة الجديدة بتتحدث لما أسامي الفريق توصل
-    const pick = $("assignee");
-    if (pick && document.activeElement !== pick) pick.innerHTML = memberOptions(draft.assignee, "مش متعيّن");
     document.querySelectorAll(".sb-nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.nav === route.view));
   }
 
@@ -624,13 +621,6 @@
     }
   }
 
-  const memberOptions = (selected, emptyLabel) => {
-    const names = memberNames();
-    if (selected && !names.some((n) => same(n, selected))) names.push(selected);
-    return `<option value="">${emptyLabel}</option>` +
-      names.map((n) => `<option value="${esc(n)}" ${same(n, selected) ? "selected" : ""}>${esc(n)}${same(n, myName()) ? " (إنت)" : ""}</option>`).join("");
-  };
-
   function composeHtml() {
     const author = draft.author || myName();
     return `
@@ -670,7 +660,8 @@
           <div class="grid-2">
             <div class="field">
               <label for="assignee">المسؤول عنها <span class="optional">اختياري</span></label>
-              <select id="assignee" class="input">${memberOptions(draft.assignee, "مش متعيّن")}</select>
+              <input id="assignee" class="input" type="text" maxlength="60" list="names" autocomplete="off"
+                placeholder="اكتب اسم المسؤول" value="${esc(draft.assignee)}" />
             </div>
             <div class="field">
               <span class="label" id="urgent-label">الأهمية</span>
@@ -813,7 +804,8 @@
 
     const props = [
       ["الحالة", badge],
-      ["المسؤول", `<select class="prop-select" data-field="assignee" aria-label="المسؤول عن المشكلة">${memberOptions(i.assignee, "مش متعيّن")}</select>`],
+      ["المسؤول", `<input class="prop-select prop-input" data-field="assignee" type="text" maxlength="60" list="names" autocomplete="off"
+          aria-label="المسؤول عن المشكلة" placeholder="اكتب اسم المسؤول" value="${esc(i.assignee || "")}" />`],
       ["الأهمية", `<select class="prop-select${isUrgent(i) ? " is-urgent" : ""}" data-field="priority" aria-label="أهمية المشكلة">
           <option value="normal" ${isUrgent(i) ? "" : "selected"}>عادية</option>
           <option value="urgent" ${isUrgent(i) ? "selected" : ""}>عاجلة</option>
@@ -1414,7 +1406,7 @@
       // الخانات الجديدة بتتبعت بس لو ليها قيمة، عشان التسجيل يشتغل حتى قبل تحديث قاعدة البيانات
       if (uploaded.length) row.images = uploaded;
       if ($("urgent").checked) row.priority = "urgent";
-      if ($("assignee").value) row.assignee = $("assignee").value;
+      if ($("assignee").value.trim()) row.assignee = $("assignee").value.trim();
       const created = await store.add(row);
       saveName(author);
       clearDraftImages();
@@ -1868,7 +1860,7 @@
     const view = $("view");
     view.addEventListener("input", (e) => {
       const id = e.target.id;
-      if (["title", "details", "note", "author"].includes(id)) draft[id] = e.target.value;
+      if (["title", "details", "note", "author", "assignee"].includes(id)) draft[id] = e.target.value;
       if (id === "title" && e.target.value.trim()) flagError("title", "title-error", false);
       if (id === "author" && e.target.value.trim()) flagError("author", "author-error", false);
       if (id === "by" && e.target.value.trim()) flagError("by", "by-error", false);
@@ -1880,10 +1872,15 @@
       const t = e.target;
       if (t.id === "urgent") draft.urgent = t.checked;
       if (t.id === "assignee") draft.assignee = t.value;
+      if (t.classList.contains("prop-input")) return changeField(t.dataset.field, t.value.trim());
       if (t.classList.contains("prop-select")) changeField(t.dataset.field, t.value);
     });
 
     view.addEventListener("keydown", (e) => {
+      if (e.target.classList?.contains("prop-input") && e.key === "Enter") {
+        e.preventDefault();
+        e.target.blur();
+      }
       if (e.target.id === "chat-input" && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         sendComment();
