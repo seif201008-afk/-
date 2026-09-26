@@ -334,7 +334,7 @@ async function summarize(req: Request, body: { problem_id?: number }) {
     `الحالة: ${status}\nالمسؤول: ${p.assignee ?? "مش متعيّن"}\n${p.solution ? `الحل المكتوب: ${p.solution}\n` : ""}\n` +
     `النقاش:\n${transcript}`;
 
-  const model = cfg.gemini_model || "gemini-2.5-flash";
+  const model = cfg.gemini_model || "gemini-3.8-flash";
   const r = await fetch(`${GEMINI}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": cfg.gemini_key },
@@ -388,7 +388,7 @@ async function transcribe(req: Request, body: { path?: string }) {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   const mimeType = AUDIO_MIME[ext] || audioRes.headers.get("content-type") || "audio/webm";
 
-  const model = cfg.gemini_model || "gemini-2.5-flash";
+  const model = cfg.gemini_model || "gemini-3.8-flash";
   const r = await fetch(`${GEMINI}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": cfg.gemini_key },

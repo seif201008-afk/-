@@ -178,7 +178,10 @@ create table if not exists public.push_config (
   function_url   text not null
 );
 alter table public.push_config add column if not exists gemini_key   text;
-alter table public.push_config add column if not exists gemini_model text not null default 'gemini-2.5-flash';
+alter table public.push_config add column if not exists gemini_model text not null default 'gemini-3.8-flash';
+alter table public.push_config alter column gemini_model set default 'gemini-3.8-flash';
+-- الموديل القديم بقى مسحوب من جوجل؛ لو حد لسه عليه، نحدّثه للموديل الجديد
+update public.push_config set gemini_model = 'gemini-3.8-flash' where gemini_model = 'gemini-2.5-flash';
 
 -- =====================================================================
 -- 2) مين عضو في الفريق
