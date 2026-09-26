@@ -269,7 +269,8 @@ returns table (
   select m.user_id, m.display_name,
          case when public.is_admin() then m.email end,
          m.joined_at, m.last_seen, m.removed, m.availability, m.status_note,
-         lower(m.email) = (select admin from s),
+         -- محدش غير الأدمن نفسه يعرف مين الأدمن
+         case when public.is_admin() then lower(m.email) = (select admin from s) else false end,
          (not m.removed and coalesce(r.rn, 1000000) <= (select member_limit from s)),
          coalesce(r.rn, 0)::int
   from public.members m

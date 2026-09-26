@@ -1621,7 +1621,7 @@
           <div class="member-top">
             <span class="member-av">${avatar(r.display_name)}<span class="presence-dot${on ? " on" : ""}" aria-hidden="true"></span></span>
             <div class="member-id">
-              <h3>${esc(r.display_name)}${isMe ? ' <span class="tag-sm">إنت</span>' : ""}${r.is_admin ? ` <span class="tag-sm admin">${icon("shield")} أدمن</span>` : ""}</h3>
+              <h3>${esc(r.display_name)}${isMe ? ' <span class="tag-sm">إنت</span>' : ""}${r.is_admin && isMe ? ` <span class="tag-sm admin">${icon("shield")} أدمن</span>` : ""}</h3>
               ${status}
             </div>
           </div>
