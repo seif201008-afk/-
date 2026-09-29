@@ -261,7 +261,7 @@
   };
   const hashOf = (r) => (r.view === "issue" ? "#p" + r.id : r.view === "chat" && r.gid ? "#c" + r.gid : "#" + r.view);
   let route = parseHash(location.hash);
-  const draft = { title: "", details: "", note: "", assignee: "", due: "", urgent: false, more: false, images: [] };
+  const draft = { title: "", details: "", note: "", assignees: [], due: "", urgent: false, more: false, images: [] };
   const chatDrafts = {};
   const chatFiles = {};
   const aiCache = {};
@@ -281,7 +281,8 @@
   const ageHours = (i) => (Date.now() - new Date(i.created_at)) / 3600e3;
   const isOverdue = (i) => isOpen(i) && !!i.due_at && new Date(i.due_at) < new Date();
   const isLate = (i) => isOpen(i) && (ageHours(i) > LATE_HOURS || isOverdue(i));
-  const isAssignee = (i) => same(i.assignee, myName());
+  const assigneesOf = (i) => (Array.isArray(i?.assignees) ? i.assignees.filter(Boolean) : []);
+  const isAssignee = (i) => assigneesOf(i).some((a) => same(a, myName()));
   const commentsFor = (id) => comments.filter((c) => c.problem_id === id);
   const imagesOf = (i) => (Array.isArray(i?.images) ? i.images.filter(Boolean) : []);
   const activeRoster = () => roster.filter((r) => r.active);
@@ -305,7 +306,7 @@
     const seen = new Map();
     const add = (n) => { if (n && n.trim() && !seen.has(n.trim().toLowerCase())) seen.set(n.trim().toLowerCase(), n.trim()); };
     activeRoster().forEach((r) => add(r.display_name));
-    issues.forEach((i) => { add(i.author); add(i.solved_by); add(i.assignee); });
+    issues.forEach((i) => { add(i.author); add(i.solved_by); assigneesOf(i).forEach(add); });
     return [...seen.values()].sort((a, b) => a.localeCompare(b, "ar"));
   }
 
@@ -863,7 +864,7 @@
     ].join("");
     return `
       <button type="button" class="sb-item${active ? " active" : ""}${solved ? " solved" : ""}${unread ? " unread" : ""}" data-id="${i.id}"
-        ${active ? 'aria-current="page"' : ""} title="${esc(`${i.title} — ${i.author}، ${ago(i.created_at)}${i.assignee ? ` · المسؤول: ${i.assignee}` : ""}`)}">
+        ${active ? 'aria-current="page"' : ""} title="${esc(`${i.title} — ${i.author}، ${ago(i.created_at)}${assigneesOf(i).length ? ` · المسؤولين: ${assigneesOf(i).join("، ")}` : ""}`)}">
         <span class="dot${dot}" aria-hidden="true"></span>
         <span class="sb-item-title">${esc(i.title)}</span>
         ${meta ? `<span class="sb-meta">${meta}</span>` : ""}
@@ -880,9 +881,9 @@
     const rows = issues
       // البحث بيدوّر في كل المشاكل، مش في القسم المفتوح بس
       .filter((i) => q || tab === "all" || (tab === "open" ? isOpen(i) : i.status === "solved"))
-      .filter((i) => !assigneeFilter || same(i.assignee, assigneeFilter))
+      .filter((i) => !assigneeFilter || assigneesOf(i).some((a) => same(a, assigneeFilter)))
       .filter((i) => !q || String(i.id) === q.replace("#", "") ||
-        [i.title, i.details, i.note, i.author, i.solved_by, i.solution, i.assignee]
+        [i.title, i.details, i.note, i.author, i.solved_by, i.solution, ...assigneesOf(i)]
           .some((f) => (f || "").toLowerCase().includes(q)))
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
@@ -980,8 +981,8 @@
             <div class="more-body">
               <div class="grid-2">
                 <div class="field">
-                  <label for="assignee">المسؤول عنها</label>
-                  ${assigneeSelect(draft.assignee, "input", 'id="assignee"')}
+                  <span class="label">المسؤولين عنها</span>
+                  <div class="assignee-row">${assigneesChipsHtml(draft.assignees)}${assigneesButtonHtml("pick-assignees-new")}</div>
                 </div>
                 <div class="field">
                   <label for="due">لازم تتحل قبل</label>
@@ -1092,8 +1093,8 @@
         ? `<button type="button" class="btn btn-secondary btn-sm" data-action="work-stop">${icon("pause")} وقّفت الشغل عليها</button>`
         : `<button type="button" class="btn btn-primary btn-sm" data-action="work-start">${icon("play")} أنا شغال عليها</button>`);
     }
-    if (!solved && !i.assignee) {
-      btns.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="take">${icon("hand")} هتابعها أنا</button>`);
+    if (!solved && !isAssignee(i)) {
+      btns.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="take">${icon("hand")} هتابعها أنا${assigneesOf(i).length ? " كمان" : ""}</button>`);
     }
     const nRem = myReminders.filter((r) => r.problem_id === i.id).length;
     btns.push(`<button type="button" class="btn btn-ghost btn-sm${i.pinned ? " on" : ""}" data-action="pin" aria-pressed="${!!i.pinned}">${icon("pin")} ${i.pinned ? "مثبتة" : "ثبّت"}</button>`);
@@ -1108,28 +1109,56 @@
     return `<div class="toolbar" role="toolbar" aria-label="أوامر المشكلة">${btns.join("")}</div>`;
   }
 
-  // المسؤول بيتختار من أعضاء الفريق بس (أي عضو جديد بيظهر هنا لوحده)
-  function assigneeSelect(current, cls, attrs) {
+  // المسؤولين بيتختاروا من أعضاء الفريق بس (أي عضو جديد بيظهر هنا لوحده)، وممكن نختار أكتر من واحد
+  function assigneesChipsHtml(list) {
+    if (!list.length) return `<span class="sub">مفيش مسؤول</span>`;
+    return list.map((n) => {
+      const m = memberByName(n);
+      const away = m && m.availability !== "available";
+      return `<span class="tag-sm assignee-tag">${esc(same(n, myName()) ? `أنا (${n})` : n)}${away ? ` · ${esc(AVAILABILITY[m.availability].label)}` : ""}</span>`;
+    }).join("");
+  }
+  function assigneesButtonHtml(action) {
+    return `<button type="button" class="icon-btn" data-action="${action}" aria-label="عدّل المسؤولين">${icon("edit")}</button>`;
+  }
+  function openAssigneePicker(current, onSave) {
     const people = activeRoster().map((r) => r.display_name)
       .sort((a, b) => (same(b, myName()) - same(a, myName())) || a.localeCompare(b, "ar"));
-    const legacy = current && !people.some((n) => same(n, current));
-    return `<select class="${cls}" ${attrs}>
-      <option value="" ${current ? "" : "selected"}>مفيش مسؤول</option>
-      ${legacy ? `<option value="${esc(current)}" selected disabled>${esc(current)} (مش في الفريق)</option>` : ""}
-      ${people.map((n) => `<option value="${esc(n)}" ${same(n, current) ? "selected" : ""}>${esc(same(n, myName()) ? `أنا (${n})` : n)}</option>`).join("")}
-    </select>`;
+    const legacy = (current || []).filter((n) => !people.some((p) => same(p, n)));
+    openModal(`
+      <h2>${icon("user")} المسؤولين عن المشكلة</h2>
+      <p>اختار حد أو أكتر من الفريق.</p>
+      <div class="pick-list" id="assignee-pick">
+        ${legacy.map((n) => `
+          <label class="pick">
+            <input type="checkbox" value="${esc(n)}" checked disabled />
+            <span class="pick-name">${esc(n)} <span class="sub">(مش في الفريق)</span></span>
+          </label>`).join("")}
+        ${people.map((n) => `
+          <label class="pick">
+            <input type="checkbox" value="${esc(n)}" ${(current || []).some((c) => same(c, n)) ? "checked" : ""} />
+            ${avatar(n, "sm")}<span class="pick-name">${esc(same(n, myName()) ? `أنا (${n})` : n)}</span>
+          </label>`).join("")}
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" data-modal="close">إلغاء</button>
+        <button type="button" class="btn btn-primary" data-modal="save">تمام</button>
+      </div>`,
+      (a) => {
+        if (a !== "save") return;
+        const chosen = [...document.querySelectorAll("#assignee-pick input:checked")].map((x) => x.value);
+        closeModal();
+        onSave(chosen);
+      });
   }
 
   function detailHtml(i) {
     const solved = i.status === "solved";
     const person = (n) => (n ? `${avatar(n, "sm")}<span>${esc(n)}</span>` : `<span class="sub">مش متسجل</span>`);
     const when = (iso) => `<span>${esc(dateLong(iso))}</span><span class="sub">${esc(timeOnly(iso))}</span>`;
-    const asg = memberByName(i.assignee);
-    const asgAway = asg && asg.availability !== "available" ? `<span class="sub av-note ${AVAILABILITY[asg.availability].cls}">${AVAILABILITY[asg.availability].label}${asg.status_note ? ` · ${esc(asg.status_note)}` : ""}</span>` : "";
-
     const props = [
       ["الحالة", statusBadge(i)],
-      ["المسؤول", `${assigneeSelect(i.assignee, "prop-select", 'data-field="assignee" aria-label="المسؤول عن المشكلة"')}${asgAway}`],
+      ["المسؤولين", `<div class="assignee-row">${assigneesChipsHtml(assigneesOf(i))}${assigneesButtonHtml("pick-assignees")}</div>`],
       ["الأهمية", `<select class="prop-select${isUrgent(i) ? " is-urgent" : ""}" data-field="priority" aria-label="أهمية المشكلة">
           <option value="normal" ${isUrgent(i) ? "" : "selected"}>عادية</option>
           <option value="urgent" ${isUrgent(i) ? "selected" : ""}>عاجلة</option>
@@ -1191,7 +1220,8 @@
 
     const kicker = [
       statusBadge(i),
-      i.status === "in_progress" && i.assignee ? `<span class="kicker-note">${esc(i.assignee)} شغال عليها</span>` : "",
+      i.status === "in_progress" && assigneesOf(i).length
+        ? `<span class="kicker-note">${esc(assigneesOf(i).join("، "))} ${assigneesOf(i).length > 1 ? "شغالين" : "شغال"} عليها</span>` : "",
       isUrgent(i) && !solved ? `<span class="badge urgent">${icon("flame")} عاجلة</span>` : "",
       i.pinned ? `<span class="badge pinned">${icon("pin")} مثبتة</span>` : "",
       isOverdue(i) ? `<span class="badge overdue">${icon("clock")} عدّى الميعاد</span>` : isLate(i) ? `<span class="badge late">${icon("clock")} متأخرة</span>` : "",
@@ -1749,7 +1779,14 @@
       case "solved": return "حلّ المشكلة";
       case "reopened": return "فتحها تاني";
       case "recurred": return "قال إنها حصلت تاني";
-      case "assigned": return d.to ? `خلّى <b>${esc(d.to)}</b> المسؤول` : "شال المسؤول";
+      case "assigned": {
+        const added = (d.added || []).map((n) => `<b>${esc(n)}</b>`).join("، ");
+        const removed = (d.removed || []).map((n) => `<b>${esc(n)}</b>`).join("، ");
+        if (added && removed) return `ضاف ${added} وشال ${removed} من المسؤولين`;
+        if (added) return `ضاف ${added} ${d.added.length > 1 ? "كمسؤولين" : "كمسؤول"}`;
+        if (removed) return `شال ${removed} من المسؤولين`;
+        return "غيّر المسؤولين";
+      }
       case "priority": return d.to === "urgent" ? "خلّاها عاجلة" : "خلّاها عادية";
       case "due": return d.to ? `حدّد ميعاد نهائي ${esc(dateShortTime(d.to))}` : "شال الميعاد النهائي";
       case "pinned": return d.to ? "ثبّتها" : "شال التثبيت";
@@ -1794,7 +1831,7 @@
     return {
       reported: mine("author").length,
       solved: solvedBy.length,
-      assignedOpen: mine("assignee").filter(isOpen).length,
+      assignedOpen: issues.filter((i) => isOpen(i) && assigneesOf(i).some((a) => same(a, name))).length,
       avgSolve: solvedBy.length
         ? solvedBy.reduce((s, i) => s + (new Date(i.solved_at) - new Date(i.created_at)), 0) / solvedBy.length
         : null,
@@ -2175,7 +2212,7 @@
       "الحالة": statusText(i),
       "الأهمية": isUrgent(i) ? "عاجلة" : "عادية",
       "مثبتة": i.pinned ? "أيوه" : "",
-      "المسؤول": i.assignee || "",
+      "المسؤولين": assigneesOf(i).join("، "),
       "الميعاد النهائي": i.due_at ? dateTime(i.due_at) : "",
       "الوصف": i.details || "",
       "ملاحظة": i.note || "",
@@ -2481,11 +2518,11 @@
       };
       if (uploaded.length) row.images = uploaded;
       if ($("urgent").checked) row.priority = "urgent";
-      if ($("assignee").value.trim()) row.assignee = $("assignee").value.trim();
+      if (draft.assignees.length) row.assignees = draft.assignees;
       if ($("due").value) row.due_at = fromLocalInput($("due").value);
       const created = await store.addProblem(row);
       clearDraftImages();
-      Object.assign(draft, { title: "", details: "", note: "", assignee: "", due: "", urgent: false, more: false });
+      Object.assign(draft, { title: "", details: "", note: "", assignees: [], due: "", urgent: false, more: false });
       if (tab === "solved") { tab = "open"; local.set(TAB_KEY, tab); }
       await reloadProblems();
       go({ view: "issue", id: created.id });
@@ -2566,25 +2603,33 @@
     const i = findIssue(route.id);
     if (!i) return;
     let value = raw;
-    if (field === "assignee") {
-      value = raw.trim() || null;
-      if (same(value, i.assignee) || (!value && !i.assignee)) return;
-    }
     if (field === "priority" && value === priorityOf(i)) return;
     if (field === "due_at") {
       value = fromLocalInput(raw);
       if ((value || null) === (i.due_at ? new Date(i.due_at).toISOString() : null)) return;
     }
     let msg = "";
-    if (field === "assignee") {
-      const m = memberByName(value);
-      msg = !value ? "اتشالت المسؤولية"
-        : same(value, myName()) ? "بقيت إنت المسؤول عنها"
-        : m && m.availability === "away" ? `بقى ${value} المسؤول عنها · خلي بالك: ${value} في إجازة`
-        : `بقى ${value} المسؤول عنها`;
-    } else if (field === "priority") msg = value === "urgent" ? "بقت عاجلة" : "بقت عادية";
+    if (field === "priority") msg = value === "urgent" ? "بقت عاجلة" : "بقت عادية";
     else if (field === "due_at") msg = value ? `الميعاد النهائي: ${dateShortTime(value)}` : "اتشال الميعاد النهائي";
     await updateIssue({ [field]: value }, msg);
+  }
+
+  // بيتنادى من نافذة اختيار المسؤولين، سواء من صفحة المشكلة أو من "هتابعها أنا"
+  async function saveAssignees(list) {
+    const i = findIssue(route.id);
+    if (!i) return;
+    const cur = assigneesOf(i);
+    if (list.length === cur.length && list.every((n) => cur.some((c) => same(c, n)))) return;
+    const added = list.filter((n) => !cur.some((c) => same(c, n)));
+    let msg = "اتحدّثت قايمة المسؤولين";
+    if (!list.length) msg = "اتشالت المسؤولية";
+    else if (added.length === 1 && added.length === list.length - cur.length) {
+      const m = memberByName(added[0]);
+      msg = same(added[0], myName()) ? "بقيت من المسؤولين عنها"
+        : m && m.availability === "away" ? `بقى ${added[0]} من المسؤولين عنها · خلي بالك: ${added[0]} في إجازة`
+        : `بقى ${added[0]} من المسؤولين عنها`;
+    }
+    await updateIssue({ assignees: list }, msg);
   }
 
   async function deleteIssue() {
@@ -2615,7 +2660,7 @@
     renderTabs();
     renderList();
     if (window.matchMedia("(max-width: 860px)").matches) openSidebar();
-    const n = issues.filter((i) => isOpen(i) && same(i.assignee, name)).length;
+    const n = issues.filter((i) => isOpen(i) && assigneesOf(i).some((a) => same(a, name))).length;
     toast(n ? `${same(name, myName()) ? "إنت مسؤول" : `${name} مسؤول`} عن ${plural(n, WORDS.problem)} مفتوحة` : "مفيش مشاكل مفتوحة متعيّنة ليه");
   }
 
@@ -3806,7 +3851,7 @@
     view.addEventListener("input", (e) => {
       const t = e.target;
       const id = t.id;
-      if (["title", "details", "note", "assignee", "due"].includes(id)) draft[id] = t.value;
+      if (["title", "details", "note", "due"].includes(id)) draft[id] = t.value;
       if (id === "title" && t.value.trim()) flagError("title", "title-error", false);
       if (id === "edit-title" && t.value.trim()) flagError("edit-title", "edit-title-error", false);
       if (id === "chat-input") {
@@ -3918,7 +3963,9 @@
         }
         case "work-start": return updateIssue({ status: "in_progress" }, "تمام، الفريق هيعرف إنك شغال عليها");
         case "work-stop": return updateIssue({ status: "open" }, "وقّفت الشغل عليها");
-        case "take": return updateIssue({ assignee: myName() }, "بقيت إنت المسؤول عنها");
+        case "take": return saveAssignees([...assigneesOf(i), myName()]);
+        case "pick-assignees": return openAssigneePicker(assigneesOf(i), saveAssignees);
+        case "pick-assignees-new": return openAssigneePicker(draft.assignees, (list) => { draft.assignees = list; renderView(true); });
         case "pin": return updateIssue({ pinned: !i.pinned }, i.pinned ? "اتشال التثبيت" : "اتثبتت فوق القايمة");
         case "remind": return openRemind();
         case "link": return openLink();

@@ -1481,6 +1481,8 @@ select.input { cursor: pointer; }
 .tag-sm .i { width: 12px; height: 12px; }
 .tag-sm.admin { background: var(--ink); color: var(--bg); }
 .avail { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0; font-size: 13px; }
+.assignee-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.assignee-tag { font-size: 12.5px; }
 .avail-note { color: var(--ink-2); overflow-wrap: anywhere; }
 .member-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 

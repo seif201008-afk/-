@@ -57,7 +57,7 @@ type Sub = { endpoint: string; p256dh: string; auth: string; member: string; use
 type Message = { title: string; body: string; url: string; tag: string };
 type Event = {
   type: "new_problem" | "solved" | "recurred" | "started" | "assigned" | "comment" | "chat";
-  problem_id?: number; title?: string; actor?: string; assignee?: string; author?: string;
+  problem_id?: number; title?: string; actor?: string; assignees?: string[]; added?: string[]; author?: string;
   priority?: string; text?: string; attachment?: string | null; recur_count?: number;
   // رسايل الشات
   group_id?: number; group_name?: string | null; is_team?: boolean; message_id?: number; recipients?: string[];
@@ -148,7 +148,7 @@ function messageFor(ev: Event, name: string): Message | null {
   switch (ev.type) {
     case "new_problem":
       if (same(name, ev.actor)) return null;
-      if (same(name, ev.assignee)) {
+      if ((ev.assignees ?? []).some((a) => same(name, a))) {
         return { title: `${urgent}بقيت مسؤول عن مشكلة جديدة`, body: `${title} — سجّلها ${ev.actor}`, url, tag };
       }
       return { title: `${urgent}مشكلة جديدة`, body: `${title} — سجّلها ${ev.actor}`, url, tag };
@@ -162,7 +162,7 @@ function messageFor(ev: Event, name: string): Message | null {
       if (!same(name, ev.author) || same(name, ev.actor)) return null;
       return { title: "بدأ الشغل على مشكلتك", body: `${ev.actor} بيشتغل على «${title}»`, url, tag };
     case "assigned":
-      if (!same(name, ev.assignee) || same(name, ev.actor)) return null;
+      if (!(ev.added ?? []).some((a) => same(name, a)) || same(name, ev.actor)) return null;
       return { title: `${urgent}بقيت مسؤول عن مشكلة`, body: ev.actor ? `${title} — من ${ev.actor}` : title, url, tag };
     case "comment": {
       if (same(name, ev.actor)) return null;
@@ -212,6 +212,7 @@ async function tick(s: Sender) {
   const stats = { reminders: 0, late: 0, summaries: 0 };
   const forUser = (uid: string) => s.targets().filter((t) => t.sub.user_id === uid);
   const forName = (name: string) => s.targets().filter((t) => same(t.name, name));
+  const forNames = (names: string[]) => s.targets().filter((t) => names.some((n) => same(t.name, n)));
 
   // 1) "فكّرني بعدين"
   const due = await getJson<{ id: number; user_id: string; problem_id: number }[]>(
@@ -237,16 +238,16 @@ async function tick(s: Sender) {
 
   // 2) المسؤول عن مشكلة متأخرة أو عدّى ميعادها (مرة كل يوم تقريبًا)
   const open = await getJson<{
-    id: number; title: string; assignee: string; created_at: string; due_at: string | null;
+    id: number; title: string; assignees: string[]; created_at: string; due_at: string | null;
     last_reminded_at: string | null; priority: string;
-  }[]>(`team_problems?status=neq.solved&assignee=not.is.null&select=id,title,assignee,created_at,due_at,last_reminded_at,priority`);
+  }[]>(`team_problems?status=neq.solved&assignees=not.eq.{}&select=id,title,assignees,created_at,due_at,last_reminded_at,priority`);
   for (const p of open) {
     const ageH = (now.getTime() - new Date(p.created_at).getTime()) / 3600e3;
     const overdue = !!p.due_at && new Date(p.due_at) < now;
     if (ageH < LATE_HOURS && !overdue) continue;
     if (p.last_reminded_at && now.getTime() - new Date(p.last_reminded_at).getTime() < REMIND_EVERY_HOURS * 3600e3) continue;
     const urgent = p.priority === "urgent";
-    const targets = forName(p.assignee).filter((t) => urgent || !inQuiet(t.member));
+    const targets = forNames(p.assignees).filter((t) => urgent || !inQuiet(t.member));
     if (!targets.length) continue; // هيتبعت بعد ساعات الهدوء
     const days = Math.max(2, Math.round(ageH / 24));
     const msg = overdue
@@ -265,9 +266,9 @@ async function tick(s: Sender) {
   });
   if (ready.length) {
     const all = await getJson<{
-      status: string; priority: string; assignee: string | null; created_at: string;
+      status: string; priority: string; assignees: string[]; created_at: string;
       solved_at: string | null; due_at: string | null;
-    }[]>(`team_problems?select=status,priority,assignee,created_at,solved_at,due_at`);
+    }[]>(`team_problems?select=status,priority,assignees,created_at,solved_at,due_at`);
     const openList = all.filter((p) => p.status !== "solved");
     const late = openList.filter((p) =>
       (now.getTime() - new Date(p.created_at).getTime()) / 3600e3 > LATE_HOURS || (p.due_at && new Date(p.due_at) < now)
@@ -275,7 +276,7 @@ async function tick(s: Sender) {
     const urgentCount = openList.filter((p) => p.priority === "urgent").length;
     const solved24 = all.filter((p) => p.solved_at && now.getTime() - new Date(p.solved_at).getTime() < 24 * 3600e3).length;
     for (const m of ready) {
-      const mine = openList.filter((p) => same(p.assignee, m.display_name)).length;
+      const mine = openList.filter((p) => (p.assignees ?? []).some((a) => same(a, m.display_name))).length;
       const body = openList.length
         ? `${openList.length} مفتوحة (${urgentCount} عاجلة، ${late} متأخرة) · اتحل ${solved24} في آخر 24 ساعة${mine ? ` · عليك ${mine}` : ""}`
         : `مفيش مشاكل مفتوحة 🎉 · اتحل ${solved24} في آخر 24 ساعة`;
@@ -308,7 +309,7 @@ async function summarize(req: Request, body: { problem_id?: number }) {
   const [cfg] = await getJson<Config[]>("push_config?id=eq.1&select=gemini_key,gemini_model");
   if (!cfg?.gemini_key) return json({ error: "no_key" }, 400);
 
-  const [p] = await getJson<any[]>(`team_problems?id=eq.${id}&select=title,details,note,status,assignee,solution`);
+  const [p] = await getJson<any[]>(`team_problems?id=eq.${id}&select=title,details,note,status,assignees,solution`);
   if (!p) return json({ error: "not_found" }, 404);
   const cs = await getJson<{ author: string; body: string; attachments: { kind?: string }[]; created_at: string }[]>(
     `problem_comments?problem_id=eq.${id}&deleted_at=is.null&select=author,body,attachments,created_at&order=created_at`,
@@ -331,7 +332,7 @@ async function summarize(req: Request, body: { problem_id?: number }) {
     `• المشكلة إيه باختصار.\n• الفريق وصل لإيه لحد دلوقتي.\n• الخطوة الجاية ومين مستني إيه (لو مش واضح قول كده).\n` +
     `متضيفش أي معلومة مش موجودة في النقاش.\n\n` +
     `اسم المشكلة: ${p.title}\nالوصف: ${p.details ?? "مفيش"}\nملاحظة: ${p.note ?? "مفيش"}\n` +
-    `الحالة: ${status}\nالمسؤول: ${p.assignee ?? "مش متعيّن"}\n${p.solution ? `الحل المكتوب: ${p.solution}\n` : ""}\n` +
+    `الحالة: ${status}\nالمسؤولين: ${p.assignees?.length ? p.assignees.join("، ") : "مفيش حد متعيّن"}\n${p.solution ? `الحل المكتوب: ${p.solution}\n` : ""}\n` +
     `النقاش:\n${transcript}`;
 
   const model = cfg.gemini_model || "gemini-3.8-flash";

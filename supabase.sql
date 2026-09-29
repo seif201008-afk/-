@@ -23,7 +23,6 @@ create table if not exists public.team_problems (
 );
 
 alter table public.team_problems add column if not exists images           text[]      not null default '{}';
-alter table public.team_problems add column if not exists assignee         text;
 alter table public.team_problems add column if not exists priority         text        not null default 'normal';
 alter table public.team_problems add column if not exists edited_at        timestamptz;
 alter table public.team_problems add column if not exists due_at           timestamptz;
@@ -32,6 +31,17 @@ alter table public.team_problems add column if not exists recur_count      int  
 alter table public.team_problems add column if not exists last_reminded_at timestamptz;
 alter table public.team_problems add column if not exists created_by       uuid;
 alter table public.team_problems add column if not exists duplicate_of     bigint references public.team_problems(id) on delete set null;
+alter table public.team_problems add column if not exists assignees        text[]      not null default '{}';
+-- ممكن نحدد أكتر من مسؤول عن نفس المشكلة (كان عمود assignee لوحده قبل كده)
+do $$ begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'team_problems' and column_name = 'assignee') then
+    update public.team_problems set assignees = array[assignee] where assignee is not null and assignees = '{}';
+    alter table public.team_problems drop column assignee;
+  end if;
+exception when others then
+  raise notice 'assignee -> assignees migration skipped: %', sqlerrm;
+end $$;
 
 do $$ begin
   alter table public.team_problems drop constraint if exists team_problems_status_check;
@@ -317,7 +327,10 @@ begin
   perform set_config('app.renaming', 'on', true);
   update public.team_problems   set author    = new.display_name where lower(author)    = lower(old.display_name);
   update public.team_problems   set solved_by = new.display_name where lower(solved_by) = lower(old.display_name);
-  update public.team_problems   set assignee  = new.display_name where lower(assignee)  = lower(old.display_name);
+  update public.team_problems
+     set assignees = array(select case when lower(x) = lower(old.display_name) then new.display_name else x end
+                              from unnest(assignees) x)
+   where exists (select 1 from unnest(assignees) x where lower(x) = lower(old.display_name));
   update public.problem_comments set author   = new.display_name where lower(author)    = lower(old.display_name);
   update public.comment_reactions set member  = new.display_name where user_id = new.user_id;
   update public.problem_reads   set member    = new.display_name where user_id = new.user_id;
@@ -339,23 +352,31 @@ create trigger members_rename after update of display_name on public.members
 -- =====================================================================
 
 -- اسم اللي سجّل أو حل بياخده من حسابه، واسم المشكلة بيعدّله اللي كتبها بس،
--- و"بيتشتغل عليها" بيعلّمها المسؤول بس.
+-- و"بيتشتغل عليها" بيعلّمها أي واحد من المسؤولين بس.
 create or replace function public.team_problems_guard()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare
-  me    text := public.my_name();
-  canon text;
+  me       text := public.my_name();
+  renaming boolean := coalesce(current_setting('app.renaming', true), '') = 'on';
+  canon    text[] := '{}';
+  n        text;
+  resolved text;
 begin
   if auth.uid() is null then return new; end if;
+  if new.assignees is null then new.assignees := '{}'; end if;
 
-  -- المسؤول لازم يكون عضو في الفريق (وبنكتب اسمه زي ما هو متسجل بالظبط)
-  if new.assignee is not null and btrim(new.assignee) = '' then new.assignee := null; end if;
-  if new.assignee is not null and (tg_op = 'INSERT' or new.assignee is distinct from old.assignee)
-     and coalesce(current_setting('app.renaming', true), '') <> 'on' then
-    select m.display_name into canon from public.members m
-     where lower(btrim(m.display_name)) = lower(btrim(new.assignee)) and public.is_active_member(m.user_id);
-    if canon is null then raise exception 'assignee_not_member'; end if;
-    new.assignee := canon;
+  -- كل المسؤولين لازم يكونوا أعضاء فعليين في الفريق (وبنكتب أسمائهم زي ما هي متسجلة بالظبط)، من غير تكرار
+  if (tg_op = 'INSERT' or new.assignees is distinct from old.assignees) and not renaming then
+    foreach n in array new.assignees loop
+      if btrim(n) = '' then continue; end if;
+      select m.display_name into resolved from public.members m
+       where lower(btrim(m.display_name)) = lower(btrim(n)) and public.is_active_member(m.user_id);
+      if resolved is null then raise exception 'assignee_not_member'; end if;
+      if not exists (select 1 from unnest(canon) x where lower(x) = lower(resolved)) then
+        canon := canon || resolved;
+      end if;
+    end loop;
+    new.assignees := canon;
   end if;
 
   if tg_op = 'INSERT' then
@@ -372,14 +393,14 @@ begin
   end if;
 
   if new.status = 'in_progress' and old.status is distinct from 'in_progress' then
-    if lower(coalesce(new.assignee, '')) <> lower(coalesce(me, '')) then
+    if not exists (select 1 from unnest(new.assignees) x where lower(x) = lower(coalesce(me, ''))) then
       raise exception 'only_assignee_can_start';
     end if;
-  elsif old.status = 'in_progress' then
-    if new.assignee is distinct from old.assignee then
-      -- المسؤول اتغيّر: الشغل عليها بيقف لحد ما المسؤول الجديد يبدأ
+  elsif old.status = 'in_progress' and not renaming then
+    if new.assignees is distinct from old.assignees then
+      -- المسؤولين اتغيّروا: الشغل عليها بيقف لحد ما حد منهم يبدأ تاني
       if new.status = 'in_progress' then new.status := 'open'; end if;
-    elsif new.status = 'open' and lower(coalesce(old.assignee, '')) <> lower(coalesce(me, '')) then
+    elsif new.status = 'open' and not exists (select 1 from unnest(old.assignees) x where lower(x) = lower(coalesce(me, ''))) then
       raise exception 'only_assignee_can_stop';
     end if;
   end if;
@@ -475,9 +496,13 @@ begin
     insert into public.problem_events (problem_id, actor, kind)
     values (new.id, case when k = 'solved' then coalesce(new.solved_by, actor) else actor end, k);
   end if;
-  if new.assignee is distinct from old.assignee then
+  if new.assignees is distinct from old.assignees then
     insert into public.problem_events (problem_id, actor, kind, detail)
-    values (new.id, actor, 'assigned', jsonb_build_object('from', old.assignee, 'to', new.assignee));
+    values (new.id, actor, 'assigned', jsonb_build_object(
+      'added',   (select coalesce(array_agg(x), '{}') from unnest(new.assignees) x
+                   where not exists (select 1 from unnest(old.assignees) y where lower(y) = lower(x))),
+      'removed', (select coalesce(array_agg(x), '{}') from unnest(old.assignees) x
+                   where not exists (select 1 from unnest(new.assignees) y where lower(y) = lower(x)))));
   end if;
   if new.priority is distinct from old.priority then
     insert into public.problem_events (problem_id, actor, kind, detail)
@@ -556,7 +581,7 @@ create policy "team update" on public.team_problems for update to authenticated
 create policy "team delete" on public.team_problems for delete to authenticated using ((select public.is_team_member()));
 grant select, insert, delete on public.team_problems to authenticated;
 grant update (title, details, note, edited_at, status, solved_at, solved_by, solution, images,
-              assignee, priority, due_at, pinned, recur_count, duplicate_of)
+              assignees, priority, due_at, pinned, recur_count, duplicate_of)
   on public.team_problems to authenticated;
 grant usage, select on sequence public.team_problems_id_seq to authenticated;
 
@@ -675,6 +700,7 @@ declare
   payload jsonb;
   ptitle  text;
   actor   text := public.my_name();
+  added   text[];
 begin
   if current_setting('app.renaming', true) = 'on' then return null; end if;
   select * into cfg from public.push_config where id = 1;
@@ -683,7 +709,7 @@ begin
   if tg_table_name = 'team_problems' then
     if tg_op = 'INSERT' then
       payload := jsonb_build_object('type', 'new_problem', 'problem_id', new.id, 'title', new.title,
-        'actor', new.author, 'priority', new.priority, 'assignee', new.assignee);
+        'actor', new.author, 'priority', new.priority, 'assignees', new.assignees);
     elsif new.status = 'solved' and old.status is distinct from 'solved' then
       payload := jsonb_build_object('type', 'solved', 'problem_id', new.id, 'title', new.title,
         'actor', new.solved_by);
@@ -693,9 +719,12 @@ begin
     elsif new.status = 'in_progress' and old.status is distinct from 'in_progress' then
       payload := jsonb_build_object('type', 'started', 'problem_id', new.id, 'title', new.title,
         'actor', actor, 'author', new.author);
-    elsif new.assignee is not null and new.assignee is distinct from old.assignee then
+    elsif new.assignees is distinct from old.assignees then
+      added := (select coalesce(array_agg(x), '{}') from unnest(new.assignees) x
+                 where not exists (select 1 from unnest(old.assignees) y where lower(y) = lower(x)));
+      if cardinality(added) = 0 then return null; end if;
       payload := jsonb_build_object('type', 'assigned', 'problem_id', new.id, 'title', new.title,
-        'actor', actor, 'assignee', new.assignee, 'priority', new.priority);
+        'actor', actor, 'assignees', new.assignees, 'added', added, 'priority', new.priority);
     else
       return null;
     end if;
