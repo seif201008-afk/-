@@ -982,7 +982,7 @@
               <div class="grid-2">
                 <div class="field">
                   <span class="label">المسؤولين عنها</span>
-                  <div class="assignee-row">${assigneesChipsHtml(draft.assignees)}${assigneesButtonHtml("pick-assignees-new")}</div>
+                  <div class="assignee-row">${assigneesChipsHtml(draft.assignees)}${assigneesButtonHtml("pick-assignees-new", !draft.assignees.length)}</div>
                 </div>
                 <div class="field">
                   <label for="due">لازم تتحل قبل</label>
@@ -1111,15 +1111,17 @@
 
   // المسؤولين بيتختاروا من أعضاء الفريق بس (أي عضو جديد بيظهر هنا لوحده)، وممكن نختار أكتر من واحد
   function assigneesChipsHtml(list) {
-    if (!list.length) return `<span class="sub">مفيش مسؤول</span>`;
+    if (!list.length) return "";
     return list.map((n) => {
       const m = memberByName(n);
       const away = m && m.availability !== "available";
       return `<span class="tag-sm assignee-tag">${esc(same(n, myName()) ? `أنا (${n})` : n)}${away ? ` · ${esc(AVAILABILITY[m.availability].label)}` : ""}</span>`;
     }).join("");
   }
-  function assigneesButtonHtml(action) {
-    return `<button type="button" class="icon-btn" data-action="${action}" aria-label="عدّل المسؤولين">${icon("edit")}</button>`;
+  function assigneesButtonHtml(action, empty) {
+    return empty
+      ? `<button type="button" class="btn btn-ghost btn-sm" data-action="${action}">${icon("user")} حدّد مسؤول</button>`
+      : `<button type="button" class="icon-btn" data-action="${action}" aria-label="عدّل المسؤولين">${icon("edit")}</button>`;
   }
   function openAssigneePicker(current, onSave) {
     const people = activeRoster().map((r) => r.display_name)
@@ -1158,7 +1160,7 @@
     const when = (iso) => `<span>${esc(dateLong(iso))}</span><span class="sub">${esc(timeOnly(iso))}</span>`;
     const props = [
       ["الحالة", statusBadge(i)],
-      ["المسؤولين", `<div class="assignee-row">${assigneesChipsHtml(assigneesOf(i))}${assigneesButtonHtml("pick-assignees")}</div>`],
+      ["المسؤولين", `<div class="assignee-row">${assigneesChipsHtml(assigneesOf(i))}${assigneesButtonHtml("pick-assignees", !assigneesOf(i).length)}</div>`],
       ["الأهمية", `<select class="prop-select${isUrgent(i) ? " is-urgent" : ""}" data-field="priority" aria-label="أهمية المشكلة">
           <option value="normal" ${isUrgent(i) ? "" : "selected"}>عادية</option>
           <option value="urgent" ${isUrgent(i) ? "selected" : ""}>عاجلة</option>
