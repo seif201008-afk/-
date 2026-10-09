@@ -1,0 +1,569 @@
+{
+ "name": "Token Health Check v2",
+ "nodes": [
+  {
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "hours",
+       "hoursInterval": 6
+      }
+     ]
+    }
+   },
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.4,
+   "position": [
+    0,
+    0
+   ],
+   "id": "9041aa51-fef3-4524-bfe9-45023e2084f4",
+   "name": "Schedule Trigger"
+  },
+  {
+   "parameters": {
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/businesses",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "active",
+       "value": "eq.true"
+      },
+      {
+       "name": "page_token",
+       "value": "not.is.null"
+      },
+      {
+       "name": "select",
+       "value": "id,name,page_id,page_token"
+      },
+      {
+       "name": "page_id",
+       "value": "neq.108372384847271"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    224,
+    0
+   ],
+   "id": "6cdc3fa1-8dbc-45f0-ae1e-7e8b0dddf941",
+   "name": "GetBusinesses",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "url": "https://graph.facebook.com/v21.0/me?fields=id,name",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Authorization",
+       "value": "=Bearer {{ $json.page_token }}"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    448,
+    0
+   ],
+   "id": "039c5e59-9fbc-497b-939b-157aa3ee9b98",
+   "name": "CheckToken",
+   "onError": "continueErrorOutput"
+  },
+  {
+   "parameters": {
+    "chatId": "1279230788",
+    "text": "=⚠️ توكن صفحة مطعم مش شغال\nالقناة: فيسبوك ماسنجر\nالمطعم: {{ $('GetBusinesses').item.json.name }}\nPage ID: {{ $('GetBusinesses').item.json.page_id }}\nالخطأ: {{ String($json.error.message || '').replace(/[^A-Za-z0-9 .,:\\-]/g, ' ').slice(0, 150) }}\nالحل: سجّل الصفحة تاني في فورم \"إضافة مطعم جديد\" عشان التوكن يتحدّث.",
+    "additionalFields": {
+     "appendAttribution": false
+    }
+   },
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "position": [
+    672,
+    96
+   ],
+   "id": "1e86d68c-a715-454e-996d-631f891e0b2b",
+   "name": "AlertBadToken",
+   "credentials": {
+    "telegramApi": {
+     "id": "2DxqCW32Nx8IbsJg",
+     "name": "Syneixa Alerts Bot"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "url": "=https://graph.facebook.com/v21.0/{{ $('GetBusinesses').item.json.page_id }}/subscribed_apps",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Authorization",
+       "value": "=Bearer {{ $('GetBusinesses').item.json.page_token }}"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    672,
+    -96
+   ],
+   "id": "bc487cd4-a606-4edf-a282-29aca1e97e65",
+   "name": "CheckSubscription",
+   "onError": "continueErrorOutput"
+  },
+  {
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "a91dbd68-97ce-479a-9db6-3171d1f38a4a",
+       "leftValue": "={{ ($json.data || []).some(a => String(a.id) === '1969540990402637' && (a.subscribed_fields || []).includes('messages')) }}",
+       "rightValue": "",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    896,
+    -160
+   ],
+   "id": "66629aba-d665-481f-95c9-d6a8fea52edb",
+   "name": "IsSubscribed"
+  },
+  {
+   "parameters": {
+    "chatId": "1279230788",
+    "text": "=⚠️ مقدرتش أفحص اشتراك مطعم القناة: فيسبوك ماسنجر المطعم: {{ $('GetBusinesses').item.json.name }} Page ID: {{ $('GetBusinesses').item.json.page_id }} السبب: {{ String($json.error.message || '').replace(/[^A-Za-z0-9 .,:\\-]/g, ' ').slice(0, 150) }}",
+    "additionalFields": {
+     "appendAttribution": false
+    }
+   },
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "position": [
+    896,
+    0
+   ],
+   "id": "c2235ed4-9a50-47f3-ad9c-e53854fca34a",
+   "name": "AlertCheckFailed",
+   "credentials": {
+    "telegramApi": {
+     "id": "2DxqCW32Nx8IbsJg",
+     "name": "Syneixa Alerts Bot"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://graph.facebook.com/v21.0/{{ $('GetBusinesses').item.json.page_id }}/subscribed_apps",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "subscribed_fields",
+       "value": "messages,message_echoes"
+      }
+     ]
+    },
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Authorization",
+       "value": "=Bearer {{ $('GetBusinesses').item.json.page_token }}"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    1120,
+    -64
+   ],
+   "id": "9e172f03-786c-405a-aef3-88e409d1b09e",
+   "name": "Resubscribe",
+   "onError": "continueErrorOutput"
+  },
+  {
+   "parameters": {
+    "chatId": "1279230788",
+    "text": "=🔧 اشتراك مطعم وقع واتعاد تلقائيًا القناة: فيسبوك ماسنجر المطعم: {{ $('GetBusinesses').item.json.name }} Page ID: {{ $('GetBusinesses').item.json.page_id }} راجع إن البوت بيرد، وإن n8n ما كانش واقف.",
+    "additionalFields": {
+     "appendAttribution": false
+    }
+   },
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "position": [
+    1344,
+    -160
+   ],
+   "id": "0f84f3bd-d40f-42d4-9be3-a035fbbd22b0",
+   "name": "AlertResubscribed",
+   "credentials": {
+    "telegramApi": {
+     "id": "2DxqCW32Nx8IbsJg",
+     "name": "Syneixa Alerts Bot"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "chatId": "1279230788",
+    "text": "=🚨 اشتراك مطعم وقع وملقيتش أعيده القناة: فيسبوك ماسنجر المطعم: {{ $('GetBusinesses').item.json.name }} Page ID: {{ $('GetBusinesses').item.json.page_id }} السبب: {{ String($json.error.message || '').replace(/[^A-Za-z0-9 .,:\\-]/g, ' ').slice(0, 150) }}",
+    "additionalFields": {}
+   },
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "position": [
+    1344,
+    32
+   ],
+   "id": "fa2a5566-7a5e-4100-8681-204e34598731",
+   "name": "AlertResubscribeFailed",
+   "credentials": {
+    "telegramApi": {
+     "id": "2DxqCW32Nx8IbsJg",
+     "name": "Syneixa Alerts Bot"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/rpc/report_bot_health",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ p_business: $('GetBusinesses').item.json.id, p_token_ok: false, p_subscribed: null, p_error: String(($json.error && $json.error.message) || '').replace(/[^A-Za-z0-9 .,:\\-]/g, ' ').slice(0, 300) }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    672,
+    -300
+   ],
+   "id": "f77b6614-3275-47d3-b227-1e8a9335846b",
+   "name": "ReportBadToken",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   },
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/rpc/report_bot_health",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ p_business: $('GetBusinesses').item.json.id, p_token_ok: true, p_subscribed: null, p_error: String(($json.error && $json.error.message) || '').replace(/[^A-Za-z0-9 .,:\\-]/g, ' ').slice(0, 300) }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    1120,
+    -300
+   ],
+   "id": "59d46899-4b53-4ed8-aafd-4489961c2725",
+   "name": "ReportCheckFailed",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   },
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/rpc/report_bot_health",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ p_business: $('GetBusinesses').item.json.id, p_token_ok: true, p_subscribed: true, p_error: null }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    1120,
+    -420
+   ],
+   "id": "50cff0ad-328d-41eb-896a-f7e3eeddf111",
+   "name": "ReportOk",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   },
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/rpc/report_bot_health",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ p_business: $('GetBusinesses').item.json.id, p_token_ok: true, p_subscribed: true, p_error: null }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    1568,
+    -160
+   ],
+   "id": "50fbdabf-bc25-43c4-b307-c37823f826c8",
+   "name": "ReportResubscribed",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   },
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/rpc/report_bot_health",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ p_business: $('GetBusinesses').item.json.id, p_token_ok: true, p_subscribed: false, p_error: String(($json.error && $json.error.message) || '').replace(/[^A-Za-z0-9 .,:\\-]/g, ' ').slice(0, 300) }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    1568,
+    32
+   ],
+   "id": "d322fa23-3b2b-4068-8209-51c659d3d10f",
+   "name": "ReportResubscribeFailed",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   },
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/rpc/touch_bot_health_messages",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "{}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    224,
+    -220
+   ],
+   "id": "1edc8184-446a-47a2-8a7f-22aa743142c4",
+   "name": "TouchMessages",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   },
+   "onError": "continueRegularOutput"
+  }
+ ],
+ "pinData": {},
+ "connections": {
+  "Schedule Trigger": {
+   "main": [
+    [
+     {
+      "node": "GetBusinesses",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "TouchMessages",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "GetBusinesses": {
+   "main": [
+    [
+     {
+      "node": "CheckToken",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "CheckToken": {
+   "main": [
+    [
+     {
+      "node": "CheckSubscription",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "AlertBadToken",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "ReportBadToken",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "CheckSubscription": {
+   "main": [
+    [
+     {
+      "node": "IsSubscribed",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "AlertCheckFailed",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "ReportCheckFailed",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "IsSubscribed": {
+   "main": [
+    [
+     {
+      "node": "ReportOk",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Resubscribe",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Resubscribe": {
+   "main": [
+    [
+     {
+      "node": "AlertResubscribed",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "ReportResubscribed",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "AlertResubscribeFailed",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "ReportResubscribeFailed",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "active": false,
+ "settings": {
+  "executionOrder": "v1",
+  "binaryMode": "separate",
+  "timeSavedMode": "fixed",
+  "errorWorkflow": "onMlXzNjRKbMLSmx",
+  "callerPolicy": "workflowsFromSameOwner",
+  "availableInMCP": false
+ },
+ "nodeGroups": [],
+ "tags": []
+}

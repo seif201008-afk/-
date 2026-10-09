@@ -1,0 +1,172 @@
+{
+ "name": "Admin Usage Alerts",
+ "nodes": [
+  {
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "minutes",
+       "minutesInterval": 5
+      }
+     ]
+    }
+   },
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.2,
+   "position": [
+    0,
+    0
+   ],
+   "id": "ec57592c-8b5b-4617-addb-49b106cbd8ca",
+   "name": "EveryFiveMinutes"
+  },
+  {
+   "parameters": {
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/notifications",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "type",
+       "value": "eq.usage_warning"
+      },
+      {
+       "name": "admin_notified",
+       "value": "eq.false"
+      },
+      {
+       "name": "select",
+       "value": "id,title,body,businesses(name)"
+      },
+      {
+       "name": "order",
+       "value": "id.asc"
+      },
+      {
+       "name": "limit",
+       "value": "20"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    240,
+    0
+   ],
+   "id": "19922c3c-ce17-4f02-9ec5-0803d7d2f057",
+   "name": "GetUnnotified",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "chatId": "1279230788",
+    "text": "={{ '⚠️ ' + $json.title + '\\nالمطعم: ' + (($json.businesses && $json.businesses.name) || 'غير معروف') + '\\n' + $json.body }}",
+    "additionalFields": {
+     "appendAttribution": false
+    }
+   },
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "position": [
+    480,
+    0
+   ],
+   "id": "bab526bf-e97d-4794-81c8-15d74499182a",
+   "name": "SendAdminAlert",
+   "credentials": {
+    "telegramApi": {
+     "id": "2DxqCW32Nx8IbsJg",
+     "name": "Syneixa Alerts Bot"
+    }
+   },
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {
+    "method": "PATCH",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/notifications",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "id",
+       "value": "=eq.{{ $('GetUnnotified').item.json.id }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ admin_notified: true }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    720,
+    0
+   ],
+   "id": "403e0814-e373-412c-be9a-b822fbce05df",
+   "name": "MarkNotified",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "EveryFiveMinutes": {
+   "main": [
+    [
+     {
+      "node": "GetUnnotified",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "GetUnnotified": {
+   "main": [
+    [
+     {
+      "node": "SendAdminAlert",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "SendAdminAlert": {
+   "main": [
+    [
+     {
+      "node": "MarkNotified",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "active": false,
+ "settings": {
+  "executionOrder": "v1",
+  "saveDataSuccessExecution": "none"
+ },
+ "pinData": {}
+}
