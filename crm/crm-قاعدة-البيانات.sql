@@ -591,6 +591,19 @@ begin
   return res;
 end $$;
 
+-- يوم العمل الحالي للمطعم (بتوقيت القاهرة وحسب ساعة بداية اليوم). بتتستخدم في اختيار الفترات في الواجهة.
+create or replace function public.crm_business_today(p_business uuid)
+returns date
+language plpgsql stable security definer set search_path = public as $$
+declare sh int;
+begin
+  if auth.uid() is null or not public.is_member(p_business) then
+    raise exception 'forbidden' using errcode = '42501';
+  end if;
+  select coalesce(b.day_start_hour, 0) into sh from public.businesses b where b.id = p_business;
+  return public.crm_biz_day(now(), coalesce(sh, 0));
+end $$;
+
 -- الاحتفاظ بالعملاء (Cohorts): لكل شهر أول أوردر، كام عميل رجع في الشهور اللي بعده
 create or replace function public.crm_cohorts(p_business uuid, p_months int default 6)
 returns table(cohort text, cohort_size int, month_offset int, active int)
@@ -840,6 +853,7 @@ revoke all on table public.crm_customers from public, anon, authenticated;
 grant select on table public.crm_customers to authenticated, service_role;
 
 revoke execute on function public.crm_overview(uuid, date, date) from public, anon;
+revoke execute on function public.crm_business_today(uuid) from public, anon;
 revoke execute on function public.crm_cohorts(uuid, int) from public, anon;
 revoke execute on function public.crm_customer_top_items(uuid, text, int) from public, anon;
 revoke execute on function public.crm_customer_timeline(uuid, text, int) from public, anon;
@@ -847,6 +861,7 @@ revoke execute on function public.crm_import_customers(uuid, text, jsonb) from p
 revoke execute on function public.crm_delete_import(uuid, text) from public, anon;
 revoke execute on function public.crm_forget_customer(uuid, text) from public, anon;
 grant execute on function public.crm_overview(uuid, date, date) to authenticated, service_role;
+grant execute on function public.crm_business_today(uuid) to authenticated, service_role;
 grant execute on function public.crm_cohorts(uuid, int) to authenticated, service_role;
 grant execute on function public.crm_customer_top_items(uuid, text, int) to authenticated, service_role;
 grant execute on function public.crm_customer_timeline(uuid, text, int) to authenticated, service_role;
@@ -857,3 +872,6 @@ grant execute on function public.crm_forget_customer(uuid, text) to authenticate
 grant execute on function public.crm_norm_phone(text), public.crm_customer_key(text, text, text),
   public.crm_norm_name(text), public.crm_biz_day(timestamptz, int),
   public.crm_parse_order_items(text) to authenticated, service_role;
+
+-- تحديث ذاكرة PostgREST عشان الدوال والعروض الجديدة تظهر للـ API على طول
+notify pgrst, 'reload schema';
