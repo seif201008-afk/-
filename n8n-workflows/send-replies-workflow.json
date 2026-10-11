@@ -1,0 +1,273 @@
+{
+ "name": "إرسال الردود",
+ "nodes": [
+  {
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "minutes",
+       "minutesInterval": 1
+      }
+     ]
+    }
+   },
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.2,
+   "position": [
+    0,
+    0
+   ],
+   "id": "7f9ab919-eafb-4d19-a5dd-7f5e02210404",
+   "name": "EveryMinute"
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/rpc/pending_replies",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "{}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    240,
+    0
+   ],
+   "id": "dd11bddd-3e2f-49cb-9ffe-ae471c05343e",
+   "name": "GetPending",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "jsCode": "const out = [];\nfor (const it of $input.all()) {\n  const r = it.json;\n  const last = r.last_msg ? new Date(r.last_msg).getTime() : 0;\n  const ageH = (Date.now() - last) / 3600000;\n  out.push({ json: {\n    id: r.id,\n    page_token: r.page_token,\n    sender_id: r.sender_id,\n    text: String(r.text || '').slice(0, 1800),\n    canSend: !!last && ageH < 23.5\n  } });\n}\nreturn out;"
+   },
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    480,
+    0
+   ],
+   "id": "ea8b82f4-11df-424d-ab18-bf725fa43b59",
+   "name": "Decide"
+  },
+  {
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "3cc1c4f0-cbd7-413a-a650-f26861408880",
+       "leftValue": "={{ $json.canSend }}",
+       "rightValue": "",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "looseTypeValidation": true,
+    "options": {}
+   },
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    720,
+    0
+   ],
+   "id": "ca2e88e8-b3bc-44ec-a1af-e81d3e193091",
+   "name": "IsSend"
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://graph.facebook.com/v21.0/me/messages?access_token={{ $json.page_token }}",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ recipient: { id: $json.sender_id }, messaging_type: 'RESPONSE', message: { text: $json.text } }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    960,
+    -100
+   ],
+   "id": "a0ce6903-9ba1-40d6-bb0e-2859e1eb1cfd",
+   "name": "SendReply",
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {
+    "jsCode": "const src = $('Decide').item.json;\nconst failed = !!($json.error || !$json.message_id);\nreturn { json: {\n  id: src.id,\n  status: failed ? 'failed' : 'sent',\n  sent_at: failed ? null : new Date().toISOString(),\n  error: failed ? JSON.stringify($json.error || $json).slice(0, 500) : null\n} };",
+    "mode": "runOnceForEachItem"
+   },
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1200,
+    -100
+   ],
+   "id": "e52706d8-dc49-4244-a2f3-baf2217a5e75",
+   "name": "SendResult"
+  },
+  {
+   "parameters": {
+    "jsCode": "return { json: {\n  id: $json.id,\n  status: 'expired',\n  sent_at: null,\n  error: 'عدّت 24 ساعة من آخر رسالة للعميل'\n} };",
+    "mode": "runOnceForEachItem"
+   },
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    960,
+    120
+   ],
+   "id": "35f760a9-bef3-42db-9235-5fda460e71e4",
+   "name": "ExpiredResult"
+  },
+  {
+   "parameters": {
+    "method": "PATCH",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/customer_replies",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "id",
+       "value": "=eq.{{ $json.id }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ status: $json.status, sent_at: $json.sent_at, error: $json.error }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    1440,
+    0
+   ],
+   "id": "abc2f371-2ad8-45a0-afbd-db3354d9cd33",
+   "name": "MarkReply",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "EveryMinute": {
+   "main": [
+    [
+     {
+      "node": "GetPending",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "GetPending": {
+   "main": [
+    [
+     {
+      "node": "Decide",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Decide": {
+   "main": [
+    [
+     {
+      "node": "IsSend",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "IsSend": {
+   "main": [
+    [
+     {
+      "node": "SendReply",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "ExpiredResult",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "SendReply": {
+   "main": [
+    [
+     {
+      "node": "SendResult",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "SendResult": {
+   "main": [
+    [
+     {
+      "node": "MarkReply",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "ExpiredResult": {
+   "main": [
+    [
+     {
+      "node": "MarkReply",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "active": false,
+ "settings": {
+  "executionOrder": "v1",
+  "errorWorkflow": "onMlXzNjRKbMLSmx"
+ },
+ "pinData": {}
+}

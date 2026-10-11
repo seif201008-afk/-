@@ -1,0 +1,237 @@
+{
+ "name": "Late Orders Alert v2",
+ "nodes": [
+  {
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "minutes",
+       "minutesInterval": 5
+      }
+     ]
+    }
+   },
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.4,
+   "position": [
+    -176,
+    16
+   ],
+   "id": "1888a51a-c3a9-458e-a6d1-716e8c29683a",
+   "name": "Every 5 Minutes"
+  },
+  {
+   "parameters": {
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/orders",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "status",
+       "value": "in.(new,accepted,preparing)"
+      },
+      {
+       "name": "late_alert_sent",
+       "value": "eq.false"
+      },
+      {
+       "name": "created_at",
+       "value": "=gte.{{ new Date(Date.now() - 3 * 3600000).toISOString() }}"
+      },
+      {
+       "name": "select",
+       "value": "id,business_id,sender_id,daily_number,customer_name,phone,order_type,order_items,created_at,businesses!inner(business_type,telegram_chat,delivery_minutes,pickup_minutes)"
+      },
+      {
+       "name": "businesses.business_type",
+       "value": "eq.restaurant"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    48,
+    16
+   ],
+   "id": "728165b5-5440-4cea-962e-103d98db1769",
+   "name": "FetchActiveOrders",
+   "alwaysOutputData": true,
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "jsCode": "// الأوردرات اللي فاضل على وقتها 10 دقايق أو أقل، ولسه متبعتلهاش تنبيه\nconst now = Date.now();\nconst out = [];\n\nfor (const x of $input.all()) {\n  const o = x.json;\n  if (!o || !o.id || !o.businesses) continue;\n  const b = o.businesses;\n\n  const isPickup = o.order_type === 'pickup';\n  const expected = isPickup ? (Number(b.pickup_minutes) || 20) : (Number(b.delivery_minutes) || 45);\n  const mins = Math.round((now - new Date(o.created_at).getTime()) / 60000);\n\n  if (mins >= expected - 10) {\n    const num = o.daily_number || o.id;\n    out.push({\n      json: {\n        order_id: o.id,\n        business_id: o.business_id,\n        sender_id: o.sender_id || null,\n        customer_name: o.customer_name || null,\n        customer_phone: o.phone || null,\n        chat: b.telegram_chat || '',\n        title: 'أوردر رقم ' + num + ' قرب يعدّي وقته',\n        text: '⏰ أوردر رقم ' + num + ' قرب يعدّي وقته\\n\\n' +\n              '👤 ' + (o.customer_name || '') + ' - 📞 ' + (o.phone || '') + '\\n' +\n              (isPickup ? '🏪 استلام' : '🚚 توصيل') + ' | اتعمل من ' + mins + ' دقيقة (المعتاد ' + expected + ')\\n\\n' +\n              (o.order_items || '')\n      }\n    });\n  }\n}\n\nreturn out;\n"
+   },
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    272,
+    16
+   ],
+   "id": "b9fb25ad-7a29-471b-95c0-c0e864b5a56d",
+   "name": "PickLate"
+  },
+  {
+   "parameters": {
+    "chatId": "={{ $json.chat }}",
+    "text": "={{ $json.text }}",
+    "additionalFields": {
+     "appendAttribution": false
+    }
+   },
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "position": [
+    496,
+    16
+   ],
+   "id": "6cab1f89-fd21-404f-a560-6455c582642f",
+   "name": "SendLateAlert",
+   "credentials": {
+    "telegramApi": {
+     "id": "2DxqCW32Nx8IbsJg",
+     "name": "Syneixa Alerts Bot"
+    }
+   },
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {
+    "method": "PATCH",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/orders",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "id",
+       "value": "=eq.{{ $('PickLate').item.json.order_id }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ late_alert_sent: true }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    704,
+    16
+   ],
+   "id": "5963b761-cccd-4d35-8eeb-685d03a69820",
+   "name": "MarkLateAlert",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/notifications",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ business_id: $('PickLate').item.json.business_id, type: 'late_order', severity: 'high', title: $('PickLate').item.json.title, body: $('PickLate').item.json.text, ref_table: 'orders', ref_id: String($('PickLate').item.json.order_id), sender_id: $('PickLate').item.json.sender_id, customer_name: $('PickLate').item.json.customer_name, customer_phone: $('PickLate').item.json.customer_phone, requires_action: true }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    928,
+    16
+   ],
+   "id": "9261ff8f-9c66-4679-9b72-3345368ec2f8",
+   "name": "SaveLateNotification",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   },
+   "onError": "continueRegularOutput"
+  }
+ ],
+ "pinData": {},
+ "connections": {
+  "Every 5 Minutes": {
+   "main": [
+    [
+     {
+      "node": "FetchActiveOrders",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "FetchActiveOrders": {
+   "main": [
+    [
+     {
+      "node": "PickLate",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "PickLate": {
+   "main": [
+    [
+     {
+      "node": "SendLateAlert",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "SendLateAlert": {
+   "main": [
+    [
+     {
+      "node": "MarkLateAlert",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "MarkLateAlert": {
+   "main": [
+    [
+     {
+      "node": "SaveLateNotification",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "active": false,
+ "settings": {
+  "executionOrder": "v1",
+  "binaryMode": "separate"
+ },
+ "nodeGroups": [],
+ "tags": []
+}

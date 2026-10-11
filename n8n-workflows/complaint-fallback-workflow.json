@@ -1,0 +1,260 @@
+{
+ "name": "Complaint Fallback",
+ "nodes": [
+  {
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "minutes",
+       "minutesInterval": 10
+      }
+     ]
+    }
+   },
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.2,
+   "position": [
+    0,
+    0
+   ],
+   "id": "b30e7881-50d4-42af-89ec-eedbdc4a5c1e",
+   "name": "EveryTenMinutes"
+  },
+  {
+   "parameters": {
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/complaint_drafts",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "resolved",
+       "value": "eq.false"
+      },
+      {
+       "name": "created_at",
+       "value": "=lt.{{ new Date(Date.now() - 30 * 60000).toISOString() }}"
+      },
+      {
+       "name": "select",
+       "value": "id,business_id,sender_id,order_id,summary,severity,created_at,businesses!inner(name,telegram_chat,active)"
+      },
+      {
+       "name": "businesses.active",
+       "value": "eq.true"
+      },
+      {
+       "name": "order",
+       "value": "id.asc"
+      },
+      {
+       "name": "limit",
+       "value": "20"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    240,
+    0
+   ],
+   "id": "3e91d164-ac2a-4e13-a105-6f85ad9d4544",
+   "name": "GetDrafts",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/complaints",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Prefer",
+       "value": "return=representation"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ business_id: $('GetDrafts').item.json.business_id, order_id: $('GetDrafts').item.json.order_id, sender_id: $('GetDrafts').item.json.sender_id, customer_name: null, phone: null, source: 'chat', rating: null, summary: ('(العميل ما بعتش رقمه) ' + $('GetDrafts').item.json.summary).slice(0, 500), severity: $('GetDrafts').item.json.severity, severity_type: 'complaint' }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    480,
+    0
+   ],
+   "id": "a8509943-1a8a-49f6-904c-82267096ff53",
+   "name": "SaveComplaint",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "method": "PATCH",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/complaint_drafts",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "id",
+       "value": "=eq.{{ $('GetDrafts').item.json.id }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ resolved: true }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    720,
+    0
+   ],
+   "id": "482347d6-0321-40d6-bade-ce9ed55325b3",
+   "name": "MarkResolved",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "https://uejrwqmcaqwcclywckzy.supabase.co/rest/v1/notifications",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ business_id: $('GetDrafts').item.json.business_id, type: 'complaint', severity: $('GetDrafts').item.json.severity === 'عاجل' ? 'high' : 'normal', title: 'شكوى جديدة (العميل ما بعتش رقمه)', body: $('GetDrafts').item.json.summary, ref_table: 'complaints', ref_id: String($('SaveComplaint').item.json.id), sender_id: $('GetDrafts').item.json.sender_id, customer_name: null, customer_phone: null, requires_action: true, reply_deadline: new Date(new Date($('GetDrafts').item.json.created_at).getTime() + 24 * 3600000).toISOString() }) }}",
+    "options": {}
+   },
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    960,
+    0
+   ],
+   "id": "6cfdb383-cca5-4033-bdc2-4ff0af4abbea",
+   "name": "SaveNotification",
+   "credentials": {
+    "supabaseApi": {
+     "id": "VHsYNeTKPn9mDuQF",
+     "name": "Supabase"
+    }
+   },
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {
+    "chatId": "={{ $('GetDrafts').item.json.businesses.telegram_chat }}",
+    "text": "={{ '🚨 شكوى جديدة\\n📲 القناة: ماسنجر\\n\\n📝 ' + $('GetDrafts').item.json.summary + '\\n\\n👤 غير معروف\\n📞 غير معروف (العميل ما بعتش رقمه)\\n\\nكلّم العميل أو رد عليه من صفحة الفيسبوك، والبوت هيسكت أول ما ترد.' }}",
+    "additionalFields": {
+     "appendAttribution": false
+    }
+   },
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "position": [
+    1200,
+    0
+   ],
+   "id": "90851fa5-1c6e-4cfb-bb52-81bb25888af0",
+   "name": "TelegramAlert",
+   "credentials": {
+    "telegramApi": {
+     "id": "2DxqCW32Nx8IbsJg",
+     "name": "Syneixa Alerts Bot"
+    }
+   },
+   "onError": "continueRegularOutput"
+  }
+ ],
+ "connections": {
+  "EveryTenMinutes": {
+   "main": [
+    [
+     {
+      "node": "GetDrafts",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "GetDrafts": {
+   "main": [
+    [
+     {
+      "node": "SaveComplaint",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "SaveComplaint": {
+   "main": [
+    [
+     {
+      "node": "MarkResolved",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "MarkResolved": {
+   "main": [
+    [
+     {
+      "node": "SaveNotification",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "SaveNotification": {
+   "main": [
+    [
+     {
+      "node": "TelegramAlert",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "active": false,
+ "settings": {
+  "executionOrder": "v1",
+  "saveDataSuccessExecution": "none"
+ },
+ "pinData": {}
+}

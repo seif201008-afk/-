@@ -1,0 +1,53 @@
+{
+ "name": "Webhook Signature Test",
+ "nodes": [
+  {
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "sigtest",
+    "responseMode": "lastNode",
+    "options": {
+     "rawBody": true
+    }
+   },
+   "id": "a1b2c3d4-0000-4000-8000-000000000001",
+   "name": "Webhook",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "webhookId": "5f1f0c10-0000-4000-8000-000000000001"
+  },
+  {
+   "parameters": {
+    "jsCode": "const item = $input.first();\nconst headers = item.json.headers || {};\nconst sig = headers['x-hub-signature-256'] || '';\nconst info = {\n  jsonKeys: Object.keys(item.json),\n  binaryKeys: Object.keys(item.binary || {}),\n  bodyIsObject: typeof item.json.body === 'object',\n  bodyKeys: (item.json.body && typeof item.json.body === 'object') ? Object.keys(item.json.body) : null,\n  sigHeaderPresent: !!sig\n};\n\nlet raw = null;\ntry {\n  raw = await this.helpers.getBinaryDataBuffer(0, 'data');\n  info.rawLength = raw.length;\n} catch (e) {\n  info.rawError = String(e.message || e);\n}\n\nlet crypto = null;\ntry {\n  crypto = require('crypto');\n  info.cryptoRequire = 'ok';\n} catch (e) {\n  info.cryptoRequire = 'failed: ' + String(e.message || e);\n}\n\nif (raw && crypto) {\n  const expected = 'sha256=' + crypto.createHmac('sha256', 'testsecret').update(raw).digest('hex');\n  info.signatureMatch = expected === sig;\n}\n\nreturn [{ json: info }];"
+   },
+   "id": "a1b2c3d4-0000-4000-8000-000000000002",
+   "name": "Probe",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    240,
+    0
+   ]
+  }
+ ],
+ "connections": {
+  "Webhook": {
+   "main": [
+    [
+     {
+      "node": "Probe",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "settings": {
+  "executionOrder": "v1"
+ }
+}

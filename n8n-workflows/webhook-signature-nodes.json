@@ -1,0 +1,156 @@
+{
+ "nodes": [
+  {
+   "parameters": {
+    "operation": "text",
+    "binaryPropertyName": "data",
+    "destinationKey": "rawText",
+    "options": {}
+   },
+   "id": "c5a10000-0000-4000-8000-000000000001",
+   "name": "ExtractRaw",
+   "type": "n8n-nodes-base.extractFromFile",
+   "typeVersion": 1,
+   "position": [
+    -900,
+    1120
+   ]
+  },
+  {
+   "parameters": {
+    "action": "hmac",
+    "type": "SHA256",
+    "value": "={{ $json.rawText }}",
+    "dataPropertyName": "computed",
+    "secret": "PASTE_APP_SECRET_HERE",
+    "encoding": "hex"
+   },
+   "id": "c5a10000-0000-4000-8000-000000000002",
+   "name": "HmacCalc",
+   "type": "n8n-nodes-base.crypto",
+   "typeVersion": 1,
+   "position": [
+    -700,
+    1120
+   ]
+  },
+  {
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 3
+     },
+     "conditions": [
+      {
+       "id": "c5a10000-0000-4000-8000-0000000000a1",
+       "leftValue": "={{ 'sha256=' + $json.computed }}",
+       "rightValue": "={{ $('Webhook').first().json.headers['x-hub-signature-256'] }}",
+       "operator": {
+        "type": "string",
+        "operation": "equals"
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "looseTypeValidation": true,
+    "options": {}
+   },
+   "id": "c5a10000-0000-4000-8000-000000000003",
+   "name": "SigOK",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    -500,
+    1120
+   ]
+  },
+  {
+   "parameters": {
+    "chatId": "1279230788",
+    "text": "⚠️ توقيع Webhook غلط (وضع التسجيل فقط، الرسالة لسه بتعدي). راجع Executions.",
+    "additionalFields": {
+     "appendAttribution": false
+    }
+   },
+   "id": "c5a10000-0000-4000-8000-000000000004",
+   "name": "SigBadAlert",
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "position": [
+    -300,
+    1260
+   ],
+   "credentials": {
+    "telegramApi": {
+     "id": "2DxqCW32Nx8IbsJg",
+     "name": "Syneixa Alerts Bot"
+    }
+   },
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {
+    "jsCode": "// بيرجّع بيانات الرسالة الأصلية زي ما جت من الـ Webhook (من غير الحقول اللي أضافها التحقق)\nreturn [{ json: $('Webhook').first().json }];"
+   },
+   "id": "c5a10000-0000-4000-8000-000000000005",
+   "name": "RestoreItem",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -300,
+    1120
+   ]
+  }
+ ],
+ "connections": {
+  "ExtractRaw": {
+   "main": [
+    [
+     {
+      "node": "HmacCalc",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "HmacCalc": {
+   "main": [
+    [
+     {
+      "node": "SigOK",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "SigOK": {
+   "main": [
+    [
+     {
+      "node": "RestoreItem",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "SigBadAlert",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "RestoreItem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ }
+}
